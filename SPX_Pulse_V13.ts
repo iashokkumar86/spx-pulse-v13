@@ -27,6 +27,7 @@ declare once_per_bar;
 # ---------------- Inputs ----------------
 input minimumScore = 70;
 input timeStopBars = 20;        # ~60 min: 20 on a 3-min chart, 12 on a 5-min chart
+input minRewardRisk = 0.0;      # 0 = off; 2.0 = only signal when target/stop geometry allows >= 2R
 input useTenMinuteConfirmation = yes;
 input useVIXConfirmation = yes;
 input useVIX1DExpectedMove = yes;
@@ -480,10 +481,30 @@ def putScore = Round(sessionMult * (putSetupScore + putAlign * alignMult +
 # Undecided regime demands a higher bar.
 def effMinScore = if regime == 0 then minimumScore + 5 else minimumScore;
 
+# Structure stop: beyond the nearest level / recent swing, capped at 2.2x ATR.
+def callStopCalc = Min(Lowest(low, 3), nearestSupport) - 0.25 * tolerance;
+def putStopCalc = Max(Highest(high, 3), nearestResistance) + 0.25 * tolerance;
+def callStopF = Max(callStopCalc, close - 2.2 * phaseATR);
+def putStopF = Min(putStopCalc, close + 2.2 * phaseATR);
+def callTargetCalc = if flagCallSetup then Min(flagCallTarget, emUpper1)
+                     else Min(nearestResistance, emUpper1);
+def putTargetCalc = if flagPutSetup then Max(flagPutTarget, emLower1)
+                    else Max(nearestSupport, emLower1);
+
+# Reward:risk geometry at the candidate bar. 2.5R winners are made by
+# entering where the stop is tight relative to the room, so optionally
+# refuse trades whose geometry cannot pay.
+def callRR = if close - callStopF > 0
+             then (callTargetCalc - close) / (close - callStopF) else 0;
+def putRR = if putStopF - close > 0
+            then (close - putTargetCalc) / (putStopF - close) else 0;
+def callRROK = minRewardRisk == 0 or callRR >= minRewardRisk;
+def putRROK = minRewardRisk == 0 or putRR >= minRewardRisk;
+
 # ================= Confirmation (completed bar [1] + follow-through) =======
-def confirmedCall = !lockoutCondition and callCandidate[1] and
+def confirmedCall = !lockoutCondition and callCandidate[1] and callRROK[1] and
                     callScore[1] >= effMinScore and close > close[1];
-def confirmedPut = !lockoutCondition and putCandidate[1] and
+def confirmedPut = !lockoutCondition and putCandidate[1] and putRROK[1] and
                    putScore[1] >= effMinScore and close < close[1];
 
 plot TradeCall = confirmedCall and !confirmedCall[1];
@@ -496,16 +517,6 @@ TradePut.SetDefaultColor(Color.MAGENTA);
 TradePut.SetLineWeight(4);
 
 # ================= MODULE 8: Trade management =================
-# Structure stop: beyond the nearest level / recent swing, min 1.2x ATR away.
-def callStopCalc = Min(Lowest(low, 3), nearestSupport) - 0.25 * tolerance;
-def putStopCalc = Max(Highest(high, 3), nearestResistance) + 0.25 * tolerance;
-def callStopF = Max(callStopCalc, close - 2.2 * phaseATR);
-def putStopF = Min(putStopCalc, close + 2.2 * phaseATR);
-def callTargetCalc = if flagCallSetup then Min(flagCallTarget, emUpper1)
-                     else Min(nearestResistance, emUpper1);
-def putTargetCalc = if flagPutSetup then Max(flagPutTarget, emLower1)
-                    else Max(nearestSupport, emLower1);
-
 def activeSide = if TradeCall then 1
                  else if TradePut then -1
                  else if newSession then 0
@@ -516,6 +527,15 @@ def heldStop = if TradeCall then callStopF
 def heldTarget = if TradeCall then callTargetCalc
                  else if TradePut then putTargetCalc
                  else heldTarget[1];
+def heldEntry = if TradeCall or TradePut then close else heldEntry[1];
+def heldRisk = if TradeCall then close - callStopF
+               else if TradePut then putStopF - close
+               else heldRisk[1];
+# Scale half at 1R, then trail the runner behind the 21 EMA.
+def hit1R = if TradeCall or TradePut then 0
+            else if activeSide == 1 and high >= heldEntry + heldRisk then 1
+            else if activeSide == -1 and low <= heldEntry - heldRisk then 1
+            else hit1R[1];
 def barsInTrade = if TradeCall or TradePut then 0
                   else if activeSide != 0 then barsInTrade[1] + 1
                   else 0;
@@ -525,7 +545,8 @@ def stopHit = activeSide != 0 and
 def targetHit = activeSide != 0 and
                 ((activeSide == 1 and high >= heldTarget) or
                  (activeSide == -1 and low <= heldTarget));
-def timeStop = activeSide != 0 and barsInTrade == timeStopBars;
+# Time-stop losers, never winners: once 1R is banked the runner rides the trail.
+def timeStop = activeSide != 0 and barsInTrade == timeStopBars and !hit1R;
 
 plot StopLine = if showTradeManagement and activeSide != 0 and !stopHit and !targetHit
                 then heldStop else Double.NaN;
@@ -539,6 +560,19 @@ plot TimeStopMark = if showTradeManagement and timeStop then close else Double.N
 TimeStopMark.SetPaintingStrategy(PaintingStrategy.POINTS);
 TimeStopMark.SetDefaultColor(Color.ORANGE);
 TimeStopMark.SetLineWeight(5);
+# After 1R: scale half, move stop to entry, trail the rest behind the 21 EMA.
+plot RunnerTrail = if showTradeManagement and hit1R and activeSide == 1 and !stopHit
+                   then Max(heldEntry, ema21 - 0.25 * tolerance)
+                   else if showTradeManagement and hit1R and activeSide == -1 and !stopHit
+                   then Min(heldEntry, ema21 + 0.25 * tolerance)
+                   else Double.NaN;
+RunnerTrail.SetDefaultColor(Color.LIGHT_ORANGE);
+RunnerTrail.SetStyle(Curve.FIRM);
+RunnerTrail.SetLineWeight(2);
+AddChartBubble(showTradeManagement and hit1R and !hit1R[1] and activeSide == 1,
+               low, "1R - SCALE HALF, TRAIL", Color.GREEN, no);
+AddChartBubble(showTradeManagement and hit1R and !hit1R[1] and activeSide == -1,
+               high, "1R - SCALE HALF, TRAIL", Color.GREEN, yes);
 
 # ================= Reference plots =================
 plot Ribbon8 = if showRibbon then ema8 else Double.NaN;
@@ -595,14 +629,14 @@ AddChartBubble(TradeCall, low,
     (if orbCallSetup[1] then " ORB" else if flagCallSetup[1] then " FLAG"
      else if reversalCall[1] then " LVL" else if gapFadeCall[1] then " GAPFADE"
      else if momoCall[1] and !trendCall[1] then " MOMO"
-     else " TREND"),
+     else " TREND") + " " + Round(callRR[1], 1) + "R",
     Color.CYAN, no);
 AddChartBubble(TradePut, high,
     "V13 PUT " + putScore[1] +
     (if orbPutSetup[1] then " ORB" else if flagPutSetup[1] then " FLAG"
      else if reversalPut[1] then " LVL" else if gapFadePut[1] then " GAPFADE"
      else if momoPut[1] and !trendPut[1] then " MOMO"
-     else " TREND"),
+     else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
 AddLabel(showLabels,

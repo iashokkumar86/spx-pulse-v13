@@ -69,6 +69,11 @@ Example that produces ~$100/day expectancy:
 3. Time stop: long premium not working in 60 min (orange dot) = exit. Theta
    on 0DTE accelerates all day; "it might come back" costs more each minute.
 4. Scale: take half off at 1R / at the first opposing level, trail the rest.
+   The study marks this: a green "1R - SCALE HALF, TRAIL" bubble, then an
+   orange trail line (greater of breakeven and the 21-EMA) for the runner —
+   that runner is where 2.5R+ days come from. Signal bubbles also print the
+   available R at entry (e.g. "TREND 2.7R"); set `minRewardRisk = 2.0` to
+   suppress signals whose stop/target geometry cannot pay at least 2R.
 5. Flat by 15:30. Always.
 6. Never fade a LARGE gap label, never buy calls at >85% EM used.
 7. Event days (CPI/FOMC): lockout until the dust settles, half size after.
