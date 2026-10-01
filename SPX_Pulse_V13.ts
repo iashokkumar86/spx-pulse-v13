@@ -26,6 +26,7 @@ declare once_per_bar;
 
 # ---------------- Inputs ----------------
 input minimumScore = 70;
+input timeStopBars = 20;        # ~60 min: 20 on a 3-min chart, 12 on a 5-min chart
 input useTenMinuteConfirmation = yes;
 input useVIXConfirmation = yes;
 input useVIX1DExpectedMove = yes;
@@ -89,9 +90,18 @@ def pdc = dayClose[1];
 def pdh = dayHigh[1];
 def pdl = dayLow[1];
 def dayRange = dayHigh - dayLow;
-def adr14 = Average(dayRange, 14)[1];
+def adr14raw = Average(dayRange, 14)[1];
 def dayTR = TrueRange(dayHigh, dayClose, dayLow);
-def priorATR = WildersAverage(dayTR, 14)[1];
+def priorATRraw = WildersAverage(dayTR, 14)[1];
+# On charts with < 15 days of data the 14-day aggregates are NaN. Fall back
+# to shorter lookbacks / intraday ATR so the study still works on short charts.
+def adrOK = !IsNaN(adr14raw) and adr14raw > 0;
+def adr14 = if adrOK then adr14raw
+            else if !IsNaN(dayRange[1]) and dayRange[1] > 0 then dayRange[1]
+            else 0;
+def priorATR = if !IsNaN(priorATRraw) and priorATRraw > 0 then priorATRraw
+               else if !IsNaN(dayTR[1]) and dayTR[1] > 0 then dayTR[1]
+               else 40 * WildersAverage(TrueRange(high, close, low), 14);
 
 def newSession = GetYYYYMMDD() != GetYYYYMMDD()[1];
 def tolerance = Max(phaseATR * .12, 1.0);
@@ -132,8 +142,8 @@ def gapMedium = gapAbs >= 0.20 and gapAbs <= 0.40;
 def gapLarge = gapAbs > 0.40;
 
 # Fill progress: how much of the gap has been retraced toward PDC today.
-def sessionLow = if newSession then low else Min(sessionLow[1], low);
-def sessionHigh = if newSession then high else Max(sessionHigh[1], high);
+def sessionLow = CompoundValue(1, if newSession then low else Min(sessionLow[1], low), low);
+def sessionHigh = CompoundValue(1, if newSession then high else Max(sessionHigh[1], high), high);
 def gapFillProgress =
     if gapUp and gapPts != 0 then Min(1, Max(0, (dayOpen - sessionLow) / gapPts))
     else if gapDown and gapPts != 0 then Min(1, Max(0, (sessionHigh - dayOpen) / (-gapPts)))
@@ -151,12 +161,14 @@ def gapAndGoDown = gapLarge and gapDown and gapFillProgress < 0.30;
 # ================= MODULE 2: 15-minute Opening Range =================
 def inOR = SecondsFromTime(0930) >= 0 and SecondsTillTime(0945) > 0;
 def orComplete = SecondsFromTime(0945) >= 0;
-def orHigh = if newSession then high
+def orHigh = CompoundValue(1,
+             if newSession then high
              else if inOR then Max(orHigh[1], high)
-             else orHigh[1];
-def orLow = if newSession then low
+             else orHigh[1], high);
+def orLow = CompoundValue(1,
+            if newSession then low
             else if inOR then Min(orLow[1], low)
-            else orLow[1];
+            else orLow[1], low);
 def orVolSum = if newSession then spyVolume
                else if inOR then orVolSum[1] + spyVolume
                else orVolSum[1];
@@ -168,7 +180,10 @@ def orAvgVol = if orBarCount > 0 then orVolSum / orBarCount else spyVolume;
 # Breakout quality windows (research: 9:45-10:00 strongest, dead after noon).
 def before1000 = SecondsTillTime(1000) > 0;
 def before1200 = SecondsTillTime(1200) > 0;
-def orbVolumeOK = spyVolume >= 1.5 * orAvgVol;
+# Volume filter: compare to the rolling 20-bar average (RVOL), not to the
+# opening-range bars themselves — 9:30-9:45 bars carry the day's heaviest
+# volume, so a 1.5x-of-OR filter rejected virtually every later breakout.
+def orbVolumeOK = spyRVOL >= 1.2;
 def orbBreakUp = orComplete and close > orHigh and close[1] <= orHigh;
 def orbBreakDown = orComplete and close < orLow and close[1] >= orLow;
 # Retest: prior break, then a pullback that holds the OR level.
@@ -263,12 +278,14 @@ def flagPutTarget = Lowest(low[1], 4) - poleHtDn;
 
 # ================= MODULE 6: Regime gate =================
 # First-hour range as % of 14-day ADR, frozen after 10:30.
-def fhHigh = if newSession then high
+def fhHigh = CompoundValue(1,
+             if newSession then high
              else if !after1030 then Max(fhHigh[1], high)
-             else fhHigh[1];
-def fhLow = if newSession then low
+             else fhHigh[1], high);
+def fhLow = CompoundValue(1,
+            if newSession then low
             else if !after1030 then Min(fhLow[1], low)
-            else fhLow[1];
+            else fhLow[1], low);
 def fhRangePctADR = if adr14 > 0 then (fhHigh - fhLow) / adr14 else 0;
 def insidePriorRange = close < pdh and close > pdl;
 # GEX: price below the gamma flip = negative gamma = moves amplify (trend);
@@ -290,7 +307,7 @@ def trendDnEvidence =
     (if gexTrendy and close < dayOpen then 1 else 0);
 def rangeEvidence =
     (if gapMicro then 1 else 0) +
-    (if after1030 and fhRangePctADR < 0.35 then 2 else 0) +
+    (if after1030 and adr14 > 0 and fhRangePctADR > 0 and fhRangePctADR < 0.35 then 2 else 0) +
     (if insidePriorRange then 1 else 0) +
     (if gexRangy then 1 else 0) +
     (if AbsValue(emUsed) < 0.35 and after1030 then 1 else 0);
@@ -408,11 +425,13 @@ def participationScore = if spyRVOL >= rvolNeed then 10
 def callRoom = nearestResistance - close;
 def putRoom = close - nearestSupport;
 def roomNeed = Max(5, phaseATR * 1.5);
+# The level stack is dense, so a minor level a few points away shouldn't
+# zero the room score: credit either distance-to-level OR remaining EM.
 def callRoomScore = if emUsed > 0.85 then 0
-                    else if callRoom >= roomNeed then 10
+                    else if callRoom >= roomNeed or emUsed < 0.35 then 10
                     else if callRoom >= roomNeed * 0.6 then 5 else 0;
 def putRoomScore = if emUsed < -0.85 then 0
-                   else if putRoom >= roomNeed then 10
+                   else if putRoom >= roomNeed or emUsed > -0.35 then 10
                    else if putRoom >= roomNeed * 0.6 then 5 else 0;
 
 def callGEXScore = if useManualGEX and gammaFlip > 0 and close > gammaFlip and callWall > close then 5 else 0;
@@ -428,7 +447,7 @@ def putScore = Round(sessionMult * (putSetupScore + putAlign * alignMult +
                putGEXScore + putVolScore), 0);
 
 # Undecided regime demands a higher bar.
-def effMinScore = if regime == 0 then minimumScore + 8 else minimumScore;
+def effMinScore = if regime == 0 then minimumScore + 5 else minimumScore;
 
 # ================= Confirmation (completed bar [1] + follow-through) =======
 def confirmedCall = !lockoutCondition and callCandidate[1] and
@@ -475,7 +494,7 @@ def stopHit = activeSide != 0 and
 def targetHit = activeSide != 0 and
                 ((activeSide == 1 and high >= heldTarget) or
                  (activeSide == -1 and low <= heldTarget));
-def timeStop = activeSide != 0 and barsInTrade == 20;   # ~60 min on 3-min bars
+def timeStop = activeSide != 0 and barsInTrade == timeStopBars;
 
 plot StopLine = if showTradeManagement and activeSide != 0 and !stopHit and !targetHit
                 then heldStop else Double.NaN;
@@ -598,6 +617,21 @@ AddChartBubble(showDiagnosticMarkers and IsNaN(close[-1]), close,
     "V13 | regime " + regime + " | C " + callScore + " P " + putScore +
     " | tU " + trendUpEvidence + " tD " + trendDnEvidence + " rg " + rangeEvidence,
     Color.YELLOW, yes);
+# Score-bucket breakdown so a starving component is visible at a glance:
+# setup / alignment / location / participation / room / vix.
+AddLabel(showDiagnosticMarkers,
+    "C: su " + callSetupScore + " al " + Round(callAlign * alignMult, 0) +
+    " lo " + callLocation + " pa " + participationScore +
+    " rm " + callRoomScore + " vx " + callVolScore,
+    Color.CYAN);
+AddLabel(showDiagnosticMarkers,
+    "P: su " + putSetupScore + " al " + Round(putAlign * alignMult, 0) +
+    " lo " + putLocation + " pa " + participationScore +
+    " rm " + putRoomScore + " vx " + putVolScore,
+    Color.MAGENTA);
+AddLabel(showDiagnosticMarkers and !adrOK,
+    "SHORT CHART: 14-day ADR unavailable - using 1-day fallback. Use 20d:3m.",
+    Color.RED);
 plot RawCallCandidate = if showDiagnosticMarkers and callCandidate then low - phaseATR * .08 else Double.NaN;
 plot RawPutCandidate = if showDiagnosticMarkers and putCandidate then high + phaseATR * .08 else Double.NaN;
 RawCallCandidate.SetPaintingStrategy(PaintingStrategy.POINTS);

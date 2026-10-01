@@ -20,6 +20,13 @@ nothing. **The no-trade signal is where the money is.**
 | No exits | Plotted stop (structure or 2.2×ATR, whichever is tighter), plotted target (nearest opposing level / measured move, capped at ±1 EM), orange time-stop dot at 60 min, 15:30 hard-exit alert |
 | Blunt time gate | Entries only 9:45–15:15; lunch (12–1) score haircut; UNDECIDED regime needs +8 score |
 
+## 1b. Chart setup — this matters
+
+Use a **20d : 3m** chart (or 30d : 5m), RTH only. The regime gate needs a
+14-day ADR and daily ATR from the daily aggregation; on a 2-day chart those
+are NaN and the study falls back to a 1-day approximation (a red diagnostic
+label warns you). On a 5-min chart set `timeStopBars = 12` (≈60 min).
+
 ## 2. Daily routine
 
 **Before 9:30**
