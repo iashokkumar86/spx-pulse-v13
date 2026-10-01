@@ -124,8 +124,10 @@ def spyRVOL = if Average(spyVolume, 20) > 0
 
 def vixClose = close(symbol = "VIX");
 def vixMean = ExpAverage(vixClose, 8);
-def vixCallOK = !useVIXConfirmation or vixClose <= vixMean;
-def vixPutOK = !useVIXConfirmation or vixClose >= vixMean;
+# Treat missing VIX data as "no objection" instead of letting NaN poison the score.
+def vixDataOK = !IsNaN(vixClose) and !IsNaN(vixMean);
+def vixCallOK = !useVIXConfirmation or !vixDataOK or vixClose <= vixMean;
+def vixPutOK = !useVIXConfirmation or !vixDataOK or vixClose >= vixMean;
 
 # ================= MODULE 1: Gap classifier =================
 # Buckets from SPY/ES gap-fill statistics:
@@ -204,13 +206,20 @@ def orbPrimeTime = orComplete and before1000;   # highest-stat window
 # EM = SPX_open * (VIX1D/100) / sqrt(252). ~68% of sessions close inside +-1 EM.
 def vix1dRaw = close(symbol = "VIX1D");
 def vixForEM = if useVIX1DExpectedMove and !IsNaN(vix1dRaw) and vix1dRaw > 0
-               then vix1dRaw else vixClose;
-def emPts = dayOpen * (vixForEM / 100) / Sqrt(252);
+               then vix1dRaw
+               else if !IsNaN(vixClose) and vixClose > 0 then vixClose
+               else 0;
+# NaN anywhere in the EM chain poisons regime and both scores (thinkscript
+# propagates NaN through comparisons), so fall back to ATR when vol data
+# is missing (invalid VIX1D symbol, after-hours bars, data hiccups).
+def emPtsRaw = dayOpen * (vixForEM / 100) / Sqrt(252);
+def emPts = if !IsNaN(emPtsRaw) and emPtsRaw > 0 then emPtsRaw else priorATR * 0.5;
 def emUpper1 = dayOpen + emPts;
 def emLower1 = dayOpen - emPts;
 def emUpperHalf = dayOpen + emPts * 0.5;
 def emLowerHalf = dayOpen - emPts * 0.5;
-def emUsed = if emPts > 0 then (close - dayOpen) / emPts else 0;  # signed, in EM units
+def emUsedRaw = if emPts > 0 then (close - dayOpen) / emPts else 0;
+def emUsed = if IsNaN(emUsedRaw) then 0 else emUsedRaw;  # signed, in EM units
 
 # ================= MODULE 4: Level stack + nearest S/R =================
 def pRange = pdh - pdl;
@@ -298,12 +307,14 @@ def trendUpEvidence =
     (if after1030 and fhRangePctADR > 0.45 and close > orHigh then 2 else 0) +
     (if close > pdh then 1 else 0) +
     (if bullRegimeTrend then 1 else 0) +
+    (if emUsed > 0.6 then 1 else 0) +
     (if gexTrendy and close > dayOpen then 1 else 0);
 def trendDnEvidence =
     (if gapAndGoDown then 2 else 0) +
     (if after1030 and fhRangePctADR > 0.45 and close < orLow then 2 else 0) +
     (if close < pdl then 1 else 0) +
     (if bearRegimeTrend then 1 else 0) +
+    (if emUsed < -0.6 then 1 else 0) +
     (if gexTrendy and close < dayOpen then 1 else 0);
 def rangeEvidence =
     (if gapMicro then 1 else 0) +
@@ -360,10 +371,21 @@ def breakoutCall = compressed[1] and close > rangeHigh10 and aboveVWAPProxy and
 def breakoutPut = compressed[1] and close < rangeLow10 and !aboveVWAPProxy and
                   phaseSlope < 0 and spyRVOL >= 1.10;
 
+# 7. Momentum continuation: a decisive push to new session extremes with
+# participation. Catches trend-day waterfalls that never pull back to the
+# ribbon (the only continuation entry V12/V13.0 had). Requires both EMAs
+# and phase agreement so it can't fire against structure.
+def momoCall = orComplete and close > sessionHigh[1] and close > open and
+               bullRibbon and phaseSlope > 0 and aboveVWAPProxy and
+               spyRVOL >= 1.0;
+def momoPut = orComplete and close < sessionLow[1] and close < open and
+              bearRibbon and phaseSlope < 0 and !aboveVWAPProxy and
+              spyRVOL >= 1.0;
+
 def callCandidate = trendCall or reversalCall or breakoutCall or
-                    orbCallSetup or flagCallSetup or gapFadeCall;
+                    orbCallSetup or flagCallSetup or gapFadeCall or momoCall;
 def putCandidate = trendPut or reversalPut or breakoutPut or
-                   orbPutSetup or flagPutSetup or gapFadePut;
+                   orbPutSetup or flagPutSetup or gapFadePut or momoPut;
 
 # ================= Regime-weighted scoring (0-100) =================
 # Buckets: setup quality (max 30, regime-weighted) + trend alignment (max 20,
@@ -380,13 +402,17 @@ def wFadeSetup = if regime == 3 then 30
                  else 18;
 def orbBonus = if orbPrimeTime then 4 else 0;   # 9:45-10:00 stat edge
 
+# Momentum-continuation gets slightly less than pullback entries (worse
+# location by definition) but still counts as a with-trend setup.
 def callSetupScore =
-    Min(30, Max(Max(if trendCall or breakoutCall then wTrendSetup else 0,
+    Min(30, Max(Max(Max(if trendCall or breakoutCall then wTrendSetup else 0,
+                        if momoCall then Max(0, wTrendSetup - 4) else 0),
                     if orbCallSetup then Min(30, wTrendSetup + orbBonus) else 0),
                 Max(if flagCallSetup then wTrendSetup else 0,
                     if reversalCall or gapFadeCall then wFadeSetup else 0)));
 def putSetupScore =
-    Min(30, Max(Max(if trendPut or breakoutPut then wTrendSetup else 0,
+    Min(30, Max(Max(Max(if trendPut or breakoutPut then wTrendSetup else 0,
+                        if momoPut then Max(0, wTrendSetup - 4) else 0),
                     if orbPutSetup then Min(30, wTrendSetup + orbBonus) else 0),
                 Max(if flagPutSetup then wTrendSetup else 0,
                     if reversalPut or gapFadePut then wFadeSetup else 0)));
@@ -563,12 +589,14 @@ AddChartBubble(TradeCall, low,
     "V13 CALL " + callScore[1] +
     (if orbCallSetup[1] then " ORB" else if flagCallSetup[1] then " FLAG"
      else if reversalCall[1] then " LVL" else if gapFadeCall[1] then " GAPFADE"
+     else if momoCall[1] and !trendCall[1] then " MOMO"
      else " TREND"),
     Color.CYAN, no);
 AddChartBubble(TradePut, high,
     "V13 PUT " + putScore[1] +
     (if orbPutSetup[1] then " ORB" else if flagPutSetup[1] then " FLAG"
      else if reversalPut[1] then " LVL" else if gapFadePut[1] then " GAPFADE"
+     else if momoPut[1] and !trendPut[1] then " MOMO"
      else " TREND"),
     Color.MAGENTA, yes);
 
