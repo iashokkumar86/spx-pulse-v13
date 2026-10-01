@@ -117,10 +117,15 @@ def spyCumulativePV = if newSession then spyTypical * spyVolume
 def spyCumulativeVolume = if newSession then spyVolume
                           else spyCumulativeVolume[1] + spyVolume;
 def spyVWAP = if spyCumulativeVolume > 0 then spyCumulativePV / spyCumulativeVolume else spyClose;
-def aboveVWAPProxy = spyClose >= spyVWAP;
-def spyRVOL = if Average(spyVolume, 20) > 0
-              then spyVolume / Average(spyVolume, 20)
-              else 0;
+# SPY stops printing at 16:00 while SPX bars run to 16:15; NaN here would
+# poison the scores on those bars, so hold the last known state instead.
+def aboveVWAPProxy = CompoundValue(1,
+    if !IsNaN(spyClose) and !IsNaN(spyVWAP) then spyClose >= spyVWAP
+    else aboveVWAPProxy[1], yes);
+def spyRVOLraw = if Average(spyVolume, 20) > 0
+                 then spyVolume / Average(spyVolume, 20)
+                 else 0;
+def spyRVOL = if IsNaN(spyRVOLraw) then 0 else spyRVOLraw;
 
 def vixClose = close(symbol = "VIX");
 def vixMean = ExpAverage(vixClose, 8);
