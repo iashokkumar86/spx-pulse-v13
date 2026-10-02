@@ -1,4 +1,4 @@
-# SPX Pulse V13.2 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.3 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
 #
@@ -509,10 +509,17 @@ def callStopCalc = Min(Lowest(low, 3), nearestSupport) - 0.25 * tolerance;
 def putStopCalc = Max(Highest(high, 3), nearestResistance) + 0.25 * tolerance;
 def callStopF = Max(callStopCalc, close - 2.2 * phaseATR);
 def putStopF = Min(putStopCalc, close + 2.2 * phaseATR);
-def callTargetCalc = if flagCallSetup then Min(flagCallTarget, emUpper1)
-                     else Min(nearestResistance, emUpper1);
-def putTargetCalc = if flagPutSetup then Max(flagPutTarget, emLower1)
-                    else Max(nearestSupport, emLower1);
+# Targets must sit on the trade's side of entry. When price has already
+# traded beyond the +-1 EM band, the EM cap would land behind the entry and
+# produce a negative R; fall back to pure structure in that case.
+def callTargetRaw = if flagCallSetup then Min(flagCallTarget, emUpper1)
+                    else if emUpper1 > close + tolerance then Min(nearestResistance, emUpper1)
+                    else nearestResistance;
+def putTargetRaw = if flagPutSetup then Max(flagPutTarget, emLower1)
+                   else if emLower1 < close - tolerance then Max(nearestSupport, emLower1)
+                   else nearestSupport;
+def callTargetCalc = Max(callTargetRaw, close + tolerance);
+def putTargetCalc = Min(putTargetRaw, close - tolerance);
 
 # Reward:risk geometry at the candidate bar. 2.5R winners are made by
 # entering where the stop is tight relative to the room, so optionally
@@ -664,7 +671,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.2", Color.DARK_GRAY);
+AddLabel(yes, "V13.3", Color.DARK_GRAY);
 AddLabel(showLabels,
     if regime == 1 then "REGIME: TREND UP"
     else if regime == 2 then "REGIME: TREND DOWN"
