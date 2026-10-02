@@ -1,4 +1,4 @@
-# SPX Pulse V13 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.2 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
 #
@@ -48,7 +48,16 @@ input showRibbon = yes;
 input showTradeManagement = yes;
 input showLabels = yes;
 input enableAlerts = yes;
+input enableTestAlert = no;     # fires every bar while on: proves the alert pipeline works
 input showDiagnosticMarkers = no;
+
+# NaN armor: any score bucket that goes NaN (cross-symbol data gaps)
+# contributes 0 instead of poisoning the whole score. The DATA GAP label
+# names the culprit so failures are never silent.
+script nz {
+    input value = 0;
+    plot v = if IsNaN(value) then 0 else value;
+}
 
 # ---------------- Core series (carried over from V12.1) ----------------
 def tr = TrueRange(high, close, low);
@@ -471,12 +480,26 @@ def putGEXScore = if useManualGEX and gammaFlip > 0 and close < gammaFlip and pu
 def callVolScore = if vixCallOK then 10 else 0;
 def putVolScore = if vixPutOK then 10 else 0;
 
-def callScore = Round(sessionMult * (callSetupScore + callAlign * alignMult +
-                callLocation + participationScore + callRoomScore +
-                callGEXScore + callVolScore), 0);
-def putScore = Round(sessionMult * (putSetupScore + putAlign * alignMult +
-               putLocation + participationScore + putRoomScore +
-               putGEXScore + putVolScore), 0);
+def callScore = Round(sessionMult * (nz(callSetupScore) + nz(callAlign * alignMult) +
+                nz(callLocation) + nz(participationScore) + nz(callRoomScore) +
+                nz(callGEXScore) + nz(callVolScore)), 0);
+def putScore = Round(sessionMult * (nz(putSetupScore) + nz(putAlign * alignMult) +
+               nz(putLocation) + nz(participationScore) + nz(putRoomScore) +
+               nz(putGEXScore) + nz(putVolScore)), 0);
+
+# Name any bucket that is currently NaN - shown always, not just in diagnostics.
+def anyNaN = IsNaN(callSetupScore + putSetupScore + callAlign + putAlign +
+                   callLocation + putLocation + participationScore +
+                   callRoomScore + putRoomScore + callVolScore + putVolScore);
+AddLabel(anyNaN,
+    "DATA GAP:" +
+    (if IsNaN(callSetupScore + putSetupScore) then " SETUP" else "") +
+    (if IsNaN(callAlign + putAlign) then " ALIGN" else "") +
+    (if IsNaN(callLocation + putLocation) then " LOCATION" else "") +
+    (if IsNaN(participationScore) then " SPY-VOL" else "") +
+    (if IsNaN(callRoomScore + putRoomScore) then " ROOM" else "") +
+    (if IsNaN(callVolScore + putVolScore) then " VIX" else ""),
+    Color.RED);
 
 # Undecided regime demands a higher bar.
 def effMinScore = if regime == 0 then minimumScore + 5 else minimumScore;
@@ -498,14 +521,16 @@ def callRR = if close - callStopF > 0
              then (callTargetCalc - close) / (close - callStopF) else 0;
 def putRR = if putStopF - close > 0
             then (close - putTargetCalc) / (putStopF - close) else 0;
-def callRROK = minRewardRisk == 0 or callRR >= minRewardRisk;
-def putRROK = minRewardRisk == 0 or putRR >= minRewardRisk;
+def callRROK = minRewardRisk == 0 or nz(callRR) >= minRewardRisk;
+def putRROK = minRewardRisk == 0 or nz(putRR) >= minRewardRisk;
 
 # ================= Confirmation (completed bar [1] + follow-through) =======
-def confirmedCall = !lockoutCondition and callCandidate[1] and callRROK[1] and
-                    callScore[1] >= effMinScore and close > close[1];
-def confirmedPut = !lockoutCondition and putCandidate[1] and putRROK[1] and
-                   putScore[1] >= effMinScore and close < close[1];
+def confirmedCall = !lockoutCondition and nz(callCandidate[1]) == 1 and
+                    nz(callRROK[1]) == 1 and
+                    nz(callScore[1]) >= effMinScore and close > close[1];
+def confirmedPut = !lockoutCondition and nz(putCandidate[1]) == 1 and
+                   nz(putRROK[1]) == 1 and
+                   nz(putScore[1]) >= effMinScore and close < close[1];
 
 plot TradeCall = confirmedCall and !confirmedCall[1];
 plot TradePut = confirmedPut and !confirmedPut[1];
@@ -639,6 +664,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
+AddLabel(yes, "V13.2", Color.DARK_GRAY);
 AddLabel(showLabels,
     if regime == 1 then "REGIME: TREND UP"
     else if regime == 2 then "REGIME: TREND DOWN"
@@ -707,6 +733,10 @@ RawCallCandidate.SetLineWeight(3);
 RawPutCandidate.SetPaintingStrategy(PaintingStrategy.POINTS);
 RawPutCandidate.SetDefaultColor(Color.MAGENTA);
 RawPutCandidate.SetLineWeight(3);
+
+# Pipeline test: if this one doesn't fire either, the problem is TOS alert
+# settings or the chart not streaming, not the signal logic.
+Alert(enableTestAlert, "V13 TEST ALERT - pipeline OK", Alert.BAR, Sound.Ding);
 
 Alert(enableAlerts and TradeCall,
       "SPX PULSE V13 CALL - check regime label, SPXW liquidity, event risk",
