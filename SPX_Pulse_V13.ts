@@ -1,4 +1,5 @@
-# SPX Pulse V13.8 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.9 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
 #
@@ -105,13 +106,20 @@ def dayTR = TrueRange(dayHigh, dayClose, dayLow);
 def priorATRraw = WildersAverage(dayTR, 14)[1];
 # On charts with < 15 days of data the 14-day aggregates are NaN. Fall back
 # to shorter lookbacks / intraday ATR so the study still works on short charts.
-def adrOK = !IsNaN(adr14raw) and adr14raw > 0;
+# NOTE: in thinkscript "!IsNaN(x) and x > 0" is NOT NaN-safe - the NaN
+# comparison contaminates the "and". IsNaN must be its own branch, first.
+def adrOK = if IsNaN(adr14raw) then 0 else if adr14raw > 0 then 1 else 0;
 def adr14 = if adrOK then adr14raw
-            else if !IsNaN(dayRange[1]) and dayRange[1] > 0 then dayRange[1]
+            else if IsNaN(dayRange[1]) then 0
+            else if dayRange[1] > 0 then dayRange[1]
             else 0;
-def priorATR = if !IsNaN(priorATRraw) and priorATRraw > 0 then priorATRraw
-               else if !IsNaN(dayTR[1]) and dayTR[1] > 0 then dayTR[1]
-               else 40 * WildersAverage(TrueRange(high, close, low), 14);
+def intradayATRx40 = 40 * WildersAverage(TrueRange(high, close, low), 14);
+def priorATR = if IsNaN(priorATRraw) then
+                   (if IsNaN(dayTR[1]) then intradayATRx40
+                    else if dayTR[1] > 0 then dayTR[1]
+                    else intradayATRx40)
+               else if priorATRraw > 0 then priorATRraw
+               else intradayATRx40;
 
 def newSession = GetYYYYMMDD() != GetYYYYMMDD()[1];
 def tolerance = Max(phaseATR * .12, 1.0);
@@ -142,8 +150,8 @@ def spyCumulativeVolume = if newSession then srcVolume
                           else spyCumulativeVolume[1] + srcVolume;
 def spyVWAP = if spyCumulativeVolume > 0 then spyCumulativePV / spyCumulativeVolume else srcClose;
 def aboveVWAPProxy = CompoundValue(1,
-    if !IsNaN(srcClose) and !IsNaN(spyVWAP) then srcClose >= spyVWAP
-    else aboveVWAPProxy[1], yes);
+    if IsNaN(srcClose) or IsNaN(spyVWAP) then aboveVWAPProxy[1]
+    else if srcClose >= spyVWAP then 1 else 0, yes);
 def spyRVOLraw = if Average(srcVolume, 20) > 0
                  then srcVolume / Average(srcVolume, 20)
                  else 0;
@@ -151,10 +159,12 @@ def spyRVOL = if IsNaN(spyRVOLraw) then 0 else spyRVOLraw;
 
 def vixClose = close(symbol = "VIX");
 def vixMean = ExpAverage(vixClose, 8);
-# Treat missing VIX data as "no objection" instead of letting NaN poison the score.
-def vixDataOK = !IsNaN(vixClose) and !IsNaN(vixMean);
-def vixCallOK = !useVIXConfirmation or !vixDataOK or vixClose <= vixMean;
-def vixPutOK = !useVIXConfirmation or !vixDataOK or vixClose >= vixMean;
+# Treat missing VIX data as "no objection"; IsNaN decided first, alone.
+def vixDataOK = if IsNaN(vixClose) or IsNaN(vixMean) then 0 else 1;
+def vixCallOK = if !useVIXConfirmation then 1 else if !vixDataOK then 1
+                else if vixClose <= vixMean then 1 else 0;
+def vixPutOK = if !useVIXConfirmation then 1 else if !vixDataOK then 1
+               else if vixClose >= vixMean then 1 else 0;
 
 # ================= MODULE 1: Gap classifier =================
 # Buckets from SPY/ES gap-fill statistics:
@@ -232,15 +242,16 @@ def orbPrimeTime = orComplete and before1000;   # highest-stat window
 # ================= MODULE 3: Expected-move bands from VIX1D =================
 # EM = SPX_open * (VIX1D/100) / sqrt(252). ~68% of sessions close inside +-1 EM.
 def vix1dRaw = close(symbol = "VIX1D");
-def vixForEM = if useVIX1DExpectedMove and !IsNaN(vix1dRaw) and vix1dRaw > 0
-               then vix1dRaw
-               else if !IsNaN(vixClose) and vixClose > 0 then vixClose
+# IsNaN-first branching throughout: see the adr14 note above.
+def vix1dUsable = if IsNaN(vix1dRaw) then 0 else if vix1dRaw > 0 then 1 else 0;
+def vixUsable = if IsNaN(vixClose) then 0 else if vixClose > 0 then 1 else 0;
+def vixForEM = if useVIX1DExpectedMove and vix1dUsable then vix1dRaw
+               else if vixUsable then vixClose
                else 0;
-# NaN anywhere in the EM chain poisons regime and both scores (thinkscript
-# propagates NaN through comparisons), so fall back to ATR when vol data
-# is missing (invalid VIX1D symbol, after-hours bars, data hiccups).
 def emPtsRaw = dayOpen * (vixForEM / 100) / Sqrt(252);
-def emPts = if !IsNaN(emPtsRaw) and emPtsRaw > 0 then emPtsRaw else priorATR * 0.5;
+def emPts = if IsNaN(emPtsRaw) then priorATR * 0.5
+            else if emPtsRaw > 0 then emPtsRaw
+            else priorATR * 0.5;
 def emUpper1 = dayOpen + emPts;
 def emLower1 = dayOpen - emPts;
 def emUpperHalf = dayOpen + emPts * 0.5;
@@ -699,7 +710,12 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.8", Color.DARK_GRAY);
+AddLabel(yes, "V13.9", Color.DARK_GRAY);
+AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
+# Extended-hours bars corrupt every session window, EMA and rolling range.
+def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
+def seenETH = CompoundValue(1, seenETH[1] or (ethBar and !IsNaN(close)), 0);
+AddLabel(seenETH, "EXTENDED HOURS ON - disable ETH on this chart", Color.RED);
 # Live health of every cross-symbol input the setups depend on. If any
 # reads N/A the candidate engine is running blind - that is the bug.
 AddLabel(showDiagnosticMarkers,
