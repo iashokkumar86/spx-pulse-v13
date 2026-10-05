@@ -1,4 +1,4 @@
-# SPX Pulse V13.5 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.6 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
 #
@@ -687,7 +687,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.5", Color.DARK_GRAY);
+AddLabel(yes, "V13.6", Color.DARK_GRAY);
 AddLabel(showLabels,
     if regime == 1 then "REGIME: TREND UP"
     else if regime == 2 then "REGIME: TREND DOWN"
@@ -748,12 +748,15 @@ AddLabel(showDiagnosticMarkers,
 AddLabel(showDiagnosticMarkers and !adrOK,
     "SHORT CHART: 14-day ADR unavailable - using 1-day fallback. Use 20d:3m.",
     Color.RED);
-# Every candidate bar prints its score so missed entries explain themselves:
-# a candidate under the threshold shows exactly how far short it fell.
-AddChartBubble(showDiagnosticMarkers and callCandidate,
+# Every candidate bar prints its score so missed entries explain themselves.
+# thinkorswim renders only a limited number of bubbles per chart and drops
+# everything after the cap, so restrict these to the most recent bars.
+input diagBubbleBars = 300;     # ~2.3 sessions on a 3-min chart
+def isRecentBar = IsNaN(GetValue(close, -diagBubbleBars));
+AddChartBubble(showDiagnosticMarkers and isRecentBar and callCandidate,
                low - phaseATR * .3, callScore + "/" + effMinScore,
                if callScore >= effMinScore then Color.CYAN else Color.DARK_GRAY, no);
-AddChartBubble(showDiagnosticMarkers and putCandidate,
+AddChartBubble(showDiagnosticMarkers and isRecentBar and putCandidate,
                high + phaseATR * .3, putScore + "/" + effMinScore,
                if putScore >= effMinScore then Color.MAGENTA else Color.DARK_GRAY, yes);
 
