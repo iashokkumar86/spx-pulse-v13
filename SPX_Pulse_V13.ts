@@ -1,4 +1,4 @@
-# SPX Pulse V13.13 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.14 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -508,11 +508,11 @@ def roomNeed = Max(5, phaseATR * 1.5);
 # In a confirmed trend regime, continuation at new session extremes is the
 # trade (trend days close near their extremes) - the EM anti-chase rule
 # applies to every other context but must not veto it.
-def callRoomScore = if regime == 1 and close >= sessionHigh - tolerance then 10
+def callRoomScore = if regime == 1 and close >= sessionHigh - tolerance and emUsed <= 1.0 then 10
                     else if emUsed > 0.85 then 0
                     else if callRoom >= roomNeed or emUsed < 0.35 then 10
                     else if callRoom >= roomNeed * 0.6 then 5 else 0;
-def putRoomScore = if regime == 2 and close <= sessionLow + tolerance then 10
+def putRoomScore = if regime == 2 and close <= sessionLow + tolerance and emUsed >= -1.0 then 10
                    else if emUsed < -0.85 then 0
                    else if putRoom >= roomNeed or emUsed > -0.35 then 10
                    else if putRoom >= roomNeed * 0.6 then 5 else 0;
@@ -755,7 +755,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.13", Color.DARK_GRAY);
+AddLabel(yes, "V13.14", Color.DARK_GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
