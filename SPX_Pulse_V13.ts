@@ -1,4 +1,4 @@
-# SPX Pulse V13.11 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.12 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -48,6 +48,7 @@ input showCamarilla = yes;
 input showOpeningRange = yes;
 input showRibbon = yes;
 input showTradeManagement = yes;
+input showSignalFlash = yes;     # full-height color band on signal bars, faint tint while in trade
 input showLabels = yes;          # the score/signal label
 input showContextLabels = no;    # regime, gap, OR, EM, S/R and session labels
 input enableAlerts = yes;
@@ -632,6 +633,25 @@ def targetHit = activeSide != 0 and
 # Time-stop losers, never winners: once 1R is banked the runner rides the trail.
 def timeStop = activeSide != 0 and barsInTrade == timeStopBars and !hit1R;
 
+# Unmissable signal visual: bright band on the entry bars, faint tint while
+# the trade is live. A bubble is easy to miss at 20-day zoom; a column is not.
+def flashCall = showSignalFlash and activeSide == 1 and barsInTrade <= 1;
+def flashPut = showSignalFlash and activeSide == -1 and barsInTrade <= 1;
+def inCallTrade = showSignalFlash and activeSide == 1 and !stopHit and !targetHit and barsInTrade > 1;
+def inPutTrade = showSignalFlash and activeSide == -1 and !stopHit and !targetHit and barsInTrade > 1;
+AddCloud(if flashCall then Double.POSITIVE_INFINITY else Double.NaN,
+         if flashCall then Double.NEGATIVE_INFINITY else Double.NaN,
+         Color.CYAN, Color.CYAN);
+AddCloud(if flashPut then Double.POSITIVE_INFINITY else Double.NaN,
+         if flashPut then Double.NEGATIVE_INFINITY else Double.NaN,
+         Color.MAGENTA, Color.MAGENTA);
+AddCloud(if inCallTrade then Double.POSITIVE_INFINITY else Double.NaN,
+         if inCallTrade then Double.NEGATIVE_INFINITY else Double.NaN,
+         CreateColor(0, 45, 60), CreateColor(0, 45, 60));
+AddCloud(if inPutTrade then Double.POSITIVE_INFINITY else Double.NaN,
+         if inPutTrade then Double.NEGATIVE_INFINITY else Double.NaN,
+         CreateColor(55, 0, 45), CreateColor(55, 0, 45));
+
 plot StopLine = if showTradeManagement and activeSide != 0 and !stopHit and !targetHit
                 then heldStop else Double.NaN;
 plot TargetLine = if showTradeManagement and activeSide != 0 and !stopHit and !targetHit
@@ -723,7 +743,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.11", Color.DARK_GRAY);
+AddLabel(yes, "V13.12", Color.DARK_GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
