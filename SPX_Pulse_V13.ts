@@ -1,4 +1,4 @@
-# SPX Pulse V13.10 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.11 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -48,10 +48,11 @@ input showCamarilla = yes;
 input showOpeningRange = yes;
 input showRibbon = yes;
 input showTradeManagement = yes;
-input showLabels = yes;
+input showLabels = yes;          # the score/signal label
+input showContextLabels = no;    # regime, gap, OR, EM, S/R and session labels
 input enableAlerts = yes;
 input enableTestAlert = no;     # fires every bar while on: proves the alert pipeline works
-input showDiagnosticMarkers = yes;   # tuning phase: candidate scores on; set no when done
+input showDiagnosticMarkers = no;    # turn on to see candidate scores and data health
 
 # NaN armor: any score bucket that goes NaN (cross-symbol data gaps)
 # contributes 0 instead of poisoning the whole score. The DATA GAP label
@@ -722,7 +723,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.10", Color.DARK_GRAY);
+AddLabel(yes, "V13.11", Color.DARK_GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
@@ -737,7 +738,7 @@ AddLabel(showDiagnosticMarkers,
     " | VIX " + (if IsNaN(vixClose) then "N/A!" else "" + Round(vixClose, 2)) +
     " | VIX1D " + (if IsNaN(vix1dRaw) then "N/A" else "" + Round(vix1dRaw, 2)),
     if !spyOK or IsNaN(vixClose) then Color.RED else Color.DARK_GRAY);
-AddLabel(showLabels,
+AddLabel(showContextLabels,
     if regime == 1 then "REGIME: TREND UP"
     else if regime == 2 then "REGIME: TREND DOWN"
     else if regime == 3 then "REGIME: RANGE"
@@ -746,25 +747,25 @@ AddLabel(showLabels,
     else if regime == 2 then Color.RED
     else if regime == 3 then Color.ORANGE
     else Color.GRAY);
-AddLabel(showLabels,
+AddLabel(showContextLabels,
     "GAP " + (if gapUp then "UP " else if gapDown then "DOWN " else "FLAT ") +
     Round(gapPct, 2) + "% " +
     (if gapLarge then "LARGE(go)" else if gapMedium then "MED" else "MICRO(fade)") +
     " fill " + Round(100 * gapFillProgress, 0) + "%",
     if gapAndGoUp then Color.GREEN else if gapAndGoDown then Color.RED
     else if gapFadeAlive then Color.ORANGE else Color.GRAY);
-AddLabel(showLabels and orComplete,
+AddLabel(showContextLabels and orComplete,
     "OR " + Round(orLow, 0) + "-" + Round(orHigh, 0) +
     (if brokeUpToday then " BROKE UP" else if brokeDownToday then " BROKE DN" else " INSIDE"),
     if brokeUpToday then Color.GREEN else if brokeDownToday then Color.RED else Color.GRAY);
-AddLabel(showLabels,
+AddLabel(showContextLabels,
     "EM " + Round(emPts, 0) + "pts · used " + Round(100 * emUsed, 0) + "%",
     if AbsValue(emUsed) > 0.85 then Color.RED else Color.GRAY);
-AddLabel(showLabels,
+AddLabel(showContextLabels,
     "S " + Round(nearestSupport, 0) + " / R " + Round(nearestResistance, 0),
     Color.LIGHT_GRAY);
-AddLabel(showLabels and exitWindow, "EXIT BY 15:30 — GAMMA HOUR", Color.RED);
-AddLabel(showLabels and lunch, "LUNCH — REDUCED SIZE/SCORE", Color.DARK_ORANGE);
+AddLabel(showContextLabels and exitWindow, "EXIT BY 15:30 — GAMMA HOUR", Color.RED);
+AddLabel(showContextLabels and lunch, "LUNCH — REDUCED SIZE/SCORE", Color.DARK_ORANGE);
 AddLabel(showLabels,
     if lockoutCondition then "V13 LOCKED OUT"
     else if TradeCall then "V13 TRADE CALL · " + callScore[1]
@@ -774,9 +775,9 @@ AddLabel(showLabels,
     else if TradeCall then Color.CYAN
     else if TradePut then Color.MAGENTA
     else Color.GRAY);
-AddLabel(showLabels and !useManualGEX, "GEX NOT INCLUDED", Color.DARK_GRAY);
-AddLabel(showLabels and useManualGEX, "GEX MANUAL", Color.ORANGE);
-AddLabel(showLabels, "VERIFY SPXW SPREAD · DELTA · OI · EVENT RISK", Color.YELLOW);
+AddLabel(showContextLabels and !useManualGEX, "GEX NOT INCLUDED", Color.DARK_GRAY);
+AddLabel(showContextLabels and useManualGEX, "GEX MANUAL", Color.ORANGE);
+AddLabel(showContextLabels, "VERIFY SPXW SPREAD · DELTA · OI · EVENT RISK", Color.YELLOW);
 
 AddChartBubble(showDiagnosticMarkers and IsNaN(close[-1]), close,
     "V13 | regime " + regime + " | C " + callScore + " P " + putScore +
