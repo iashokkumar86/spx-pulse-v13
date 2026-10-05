@@ -1,4 +1,4 @@
-# SPX Pulse V13.9 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.10 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -29,6 +29,7 @@ declare once_per_bar;
 input minimumScore = 70;
 input timeStopBars = 20;        # ~60 min: 20 on a 3-min chart, 12 on a 5-min chart
 input minRewardRisk = 1.5;      # 0 = off; only signal when target/stop geometry allows >= this R
+input signalCooldownBars = 10;  # suppress repeat signals on the same side for this many bars
 input useTenMinuteConfirmation = yes;
 input useVIXConfirmation = yes;
 input useVIX1DExpectedMove = yes;
@@ -578,8 +579,19 @@ def confirmedPut = !lockoutCondition and nz(putCandidate[1]) == 1 and
                    nz(putRROK[1]) == 1 and
                    nz(putScore[1]) >= effMinScore and close < close[1];
 
-plot TradeCall = confirmedCall and !confirmedCall[1];
-plot TradePut = confirmedPut and !confirmedPut[1];
+# One signal per side per cooldown window - a trend leg re-confirming every
+# few bars is the same trade, not a new one.
+def rawCall = confirmedCall and !confirmedCall[1];
+def rawPut = confirmedPut and !confirmedPut[1];
+def barsSinceCallSig = CompoundValue(1,
+    if rawCall and barsSinceCallSig[1] >= signalCooldownBars then 0
+    else barsSinceCallSig[1] + 1, signalCooldownBars);
+def barsSincePutSig = CompoundValue(1,
+    if rawPut and barsSincePutSig[1] >= signalCooldownBars then 0
+    else barsSincePutSig[1] + 1, signalCooldownBars);
+
+plot TradeCall = rawCall and barsSinceCallSig == 0;
+plot TradePut = rawPut and barsSincePutSig == 0;
 TradeCall.SetPaintingStrategy(PaintingStrategy.BOOLEAN_ARROW_UP);
 TradeCall.SetDefaultColor(Color.CYAN);
 TradeCall.SetLineWeight(4);
@@ -710,7 +722,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.9", Color.DARK_GRAY);
+AddLabel(yes, "V13.10", Color.DARK_GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
