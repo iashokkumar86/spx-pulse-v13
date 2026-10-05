@@ -1,4 +1,4 @@
-# SPX Pulse V13.4 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.5 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
 #
@@ -357,10 +357,16 @@ def lockoutCondition = eventLockout or dailyRiskLockout or !eligibleTime;
 
 # ================= Setups (candidates) =================
 # 1. Trend pullback continuation (V12.1, kept).
+# In a confirmed trend regime, strong grinds hold the 8 EMA and rarely
+# reach the 13, so a shallow 8-EMA touch also qualifies as the pullback.
 def trendCall = bullRegimeTrend and phaseBull and aboveVWAPProxy and
-                low <= ema13 + tolerance and close > ema8 and close > open;
+                (low <= ema13 + tolerance or
+                 (regime == 1 and low <= ema8 + tolerance)) and
+                close > ema8 and close > open;
 def trendPut = bearRegimeTrend and phaseBear and !aboveVWAPProxy and
-               high >= ema13 - tolerance and close < ema8 and close < open;
+               (high >= ema13 - tolerance or
+                (regime == 2 and high >= ema8 - tolerance)) and
+               close < ema8 and close < open;
 
 # 2. Level rejection against the full stack or an EM band extreme.
 def nearSupport = AbsValue(low - nearestSupport) <= tolerance or low <= emLower1 + tolerance;
@@ -681,7 +687,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.4", Color.DARK_GRAY);
+AddLabel(yes, "V13.5", Color.DARK_GRAY);
 AddLabel(showLabels,
     if regime == 1 then "REGIME: TREND UP"
     else if regime == 2 then "REGIME: TREND DOWN"
@@ -742,6 +748,15 @@ AddLabel(showDiagnosticMarkers,
 AddLabel(showDiagnosticMarkers and !adrOK,
     "SHORT CHART: 14-day ADR unavailable - using 1-day fallback. Use 20d:3m.",
     Color.RED);
+# Every candidate bar prints its score so missed entries explain themselves:
+# a candidate under the threshold shows exactly how far short it fell.
+AddChartBubble(showDiagnosticMarkers and callCandidate,
+               low - phaseATR * .3, callScore + "/" + effMinScore,
+               if callScore >= effMinScore then Color.CYAN else Color.DARK_GRAY, no);
+AddChartBubble(showDiagnosticMarkers and putCandidate,
+               high + phaseATR * .3, putScore + "/" + effMinScore,
+               if putScore >= effMinScore then Color.MAGENTA else Color.DARK_GRAY, yes);
+
 plot RawCallCandidate = if showDiagnosticMarkers and callCandidate then low - phaseATR * .08 else Double.NaN;
 plot RawPutCandidate = if showDiagnosticMarkers and putCandidate then high + phaseATR * .08 else Double.NaN;
 RawCallCandidate.SetPaintingStrategy(PaintingStrategy.POINTS);
