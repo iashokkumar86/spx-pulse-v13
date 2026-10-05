@@ -1,4 +1,4 @@
-# SPX Pulse V13.6 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.7 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
 #
@@ -27,7 +27,7 @@ declare once_per_bar;
 # ---------------- Inputs ----------------
 input minimumScore = 70;
 input timeStopBars = 20;        # ~60 min: 20 on a 3-min chart, 12 on a 5-min chart
-input minRewardRisk = 0.0;      # 0 = off; 2.0 = only signal when target/stop geometry allows >= 2R
+input minRewardRisk = 1.5;      # 0 = off; only signal when target/stop geometry allows >= this R
 input useTenMinuteConfirmation = yes;
 input useVIXConfirmation = yes;
 input useVIX1DExpectedMove = yes;
@@ -49,7 +49,7 @@ input showTradeManagement = yes;
 input showLabels = yes;
 input enableAlerts = yes;
 input enableTestAlert = no;     # fires every bar while on: proves the alert pipeline works
-input showDiagnosticMarkers = no;
+input showDiagnosticMarkers = yes;   # tuning phase: candidate scores on; set no when done
 
 # NaN armor: any score bucket that goes NaN (cross-symbol data gaps)
 # contributes 0 instead of poisoning the whole score. The DATA GAP label
@@ -687,7 +687,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.6", Color.DARK_GRAY);
+AddLabel(yes, "V13.7", Color.DARK_GRAY);
 AddLabel(showLabels,
     if regime == 1 then "REGIME: TREND UP"
     else if regime == 2 then "REGIME: TREND DOWN"
@@ -751,8 +751,9 @@ AddLabel(showDiagnosticMarkers and !adrOK,
 # Every candidate bar prints its score so missed entries explain themselves.
 # thinkorswim renders only a limited number of bubbles per chart and drops
 # everything after the cap, so restrict these to the most recent bars.
-input diagBubbleBars = 300;     # ~2.3 sessions on a 3-min chart
-def isRecentBar = IsNaN(GetValue(close, -diagBubbleBars));
+# ~2.3 sessions on a 3-min chart; close[-300] is NaN only within the last
+# 300 bars of the chart (fixed index - thinkorswim needs a constant here).
+def isRecentBar = IsNaN(close[-300]);
 AddChartBubble(showDiagnosticMarkers and isRecentBar and callCandidate,
                low - phaseATR * .3, callScore + "/" + effMinScore,
                if callScore >= effMinScore then Color.CYAN else Color.DARK_GRAY, no);
