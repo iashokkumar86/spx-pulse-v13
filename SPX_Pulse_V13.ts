@@ -1,4 +1,4 @@
-# SPX Pulse V13.7 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.8 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
 #
@@ -116,24 +116,36 @@ def priorATR = if !IsNaN(priorATRraw) and priorATRraw > 0 then priorATRraw
 def newSession = GetYYYYMMDD() != GetYYYYMMDD()[1];
 def tolerance = Max(phaseATR * .12, 1.0);
 
-# ---------------- SPY participation + VWAP proxy (SPX has no real volume) --
+# ---------------- Participation + VWAP proxy (SPX has no real volume) -----
+# Automatic failover: SPY (primary) -> /ES futures -> SPX itself. A dead
+# feed must degrade the inputs, never silently disable every setup.
 def spyHigh = high(symbol = "SPY");
 def spyLow = low(symbol = "SPY");
 def spyClose = close(symbol = "SPY");
 def spyVolume = volume(symbol = "SPY");
-def spyTypical = (spyHigh + spyLow + spyClose) / 3;
-def spyCumulativePV = if newSession then spyTypical * spyVolume
-                      else spyCumulativePV[1] + spyTypical * spyVolume;
-def spyCumulativeVolume = if newSession then spyVolume
-                          else spyCumulativeVolume[1] + spyVolume;
-def spyVWAP = if spyCumulativeVolume > 0 then spyCumulativePV / spyCumulativeVolume else spyClose;
-# SPY stops printing at 16:00 while SPX bars run to 16:15; NaN here would
-# poison the scores on those bars, so hold the last known state instead.
+def spyOK = !IsNaN(spyClose) and !IsNaN(spyVolume) and spyVolume > 0;
+def esHigh = high(symbol = "/ES");
+def esLow = low(symbol = "/ES");
+def esClose = close(symbol = "/ES");
+def esVolume = volume(symbol = "/ES");
+def esOK = !IsNaN(esClose) and !IsNaN(esVolume) and esVolume > 0;
+# Final fallback: SPX itself with unit volume (VWAP degrades to a session
+# TWAP and RVOL reads a neutral 1.0).
+def srcClose = if spyOK then spyClose else if esOK then esClose else close;
+def srcTypical = if spyOK then (spyHigh + spyLow + spyClose) / 3
+                 else if esOK then (esHigh + esLow + esClose) / 3
+                 else (high + low + close) / 3;
+def srcVolume = if spyOK then spyVolume else if esOK then esVolume else 1;
+def spyCumulativePV = if newSession then srcTypical * srcVolume
+                      else spyCumulativePV[1] + srcTypical * srcVolume;
+def spyCumulativeVolume = if newSession then srcVolume
+                          else spyCumulativeVolume[1] + srcVolume;
+def spyVWAP = if spyCumulativeVolume > 0 then spyCumulativePV / spyCumulativeVolume else srcClose;
 def aboveVWAPProxy = CompoundValue(1,
-    if !IsNaN(spyClose) and !IsNaN(spyVWAP) then spyClose >= spyVWAP
+    if !IsNaN(srcClose) and !IsNaN(spyVWAP) then srcClose >= spyVWAP
     else aboveVWAPProxy[1], yes);
-def spyRVOLraw = if Average(spyVolume, 20) > 0
-                 then spyVolume / Average(spyVolume, 20)
+def spyRVOLraw = if Average(srcVolume, 20) > 0
+                 then srcVolume / Average(srcVolume, 20)
                  else 0;
 def spyRVOL = if IsNaN(spyRVOLraw) then 0 else spyRVOLraw;
 
@@ -186,8 +198,8 @@ def orLow = CompoundValue(1,
             if newSession then low
             else if inOR then Min(orLow[1], low)
             else orLow[1], low);
-def orVolSum = if newSession then spyVolume
-               else if inOR then orVolSum[1] + spyVolume
+def orVolSum = if newSession then srcVolume
+               else if inOR then orVolSum[1] + srcVolume
                else orVolSum[1];
 def orBarCount = if newSession then 1
                  else if inOR then orBarCount[1] + 1
@@ -687,7 +699,16 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.7", Color.DARK_GRAY);
+AddLabel(yes, "V13.8", Color.DARK_GRAY);
+# Live health of every cross-symbol input the setups depend on. If any
+# reads N/A the candidate engine is running blind - that is the bug.
+AddLabel(showDiagnosticMarkers,
+    "DATA src " + (if spyOK then "SPY" else if esOK then "/ES" else "SPX-TWAP!") +
+    " RVOL " + Round(spyRVOL, 2) +
+    (if aboveVWAPProxy then " >VWAP" else " <VWAP") +
+    " | VIX " + (if IsNaN(vixClose) then "N/A!" else "" + Round(vixClose, 2)) +
+    " | VIX1D " + (if IsNaN(vix1dRaw) then "N/A" else "" + Round(vix1dRaw, 2)),
+    if !spyOK or IsNaN(vixClose) then Color.RED else Color.DARK_GRAY);
 AddLabel(showLabels,
     if regime == 1 then "REGIME: TREND UP"
     else if regime == 2 then "REGIME: TREND DOWN"
