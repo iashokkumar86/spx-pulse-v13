@@ -1,4 +1,4 @@
-# SPX Pulse V13.14 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.15 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -692,8 +692,8 @@ Ribbon200.SetDefaultColor(Color.CYAN);
 
 plot OpenRangeHi = if showOpeningRange and orComplete then orHigh else Double.NaN;
 plot OpenRangeLo = if showOpeningRange and orComplete then orLow else Double.NaN;
-OpenRangeHi.SetDefaultColor(Color.WHITE);
-OpenRangeLo.SetDefaultColor(Color.WHITE);
+OpenRangeHi.SetDefaultColor(Color.ORANGE);
+OpenRangeLo.SetDefaultColor(Color.PINK);
 OpenRangeHi.SetStyle(Curve.FIRM);
 OpenRangeLo.SetStyle(Curve.FIRM);
 OpenRangeHi.SetLineWeight(2);
@@ -755,7 +755,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.14", Color.DARK_GRAY);
+AddLabel(yes, "V13.15", Color.DARK_GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
