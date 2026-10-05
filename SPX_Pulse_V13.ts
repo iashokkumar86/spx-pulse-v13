@@ -1,4 +1,4 @@
-# SPX Pulse V13.12 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.13 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -696,6 +696,17 @@ OpenRangeHi.SetDefaultColor(Color.WHITE);
 OpenRangeLo.SetDefaultColor(Color.WHITE);
 OpenRangeHi.SetStyle(Curve.FIRM);
 OpenRangeLo.SetStyle(Curve.FIRM);
+OpenRangeHi.SetLineWeight(2);
+OpenRangeLo.SetLineWeight(2);
+
+plot PriorDayHigh = pdh;
+plot PriorDayLow = pdl;
+PriorDayHigh.SetDefaultColor(Color.LIGHT_RED);
+PriorDayLow.SetDefaultColor(Color.LIGHT_GREEN);
+PriorDayHigh.SetStyle(Curve.FIRM);
+PriorDayLow.SetStyle(Curve.FIRM);
+PriorDayHigh.SetLineWeight(2);
+PriorDayLow.SetLineWeight(2);
 
 plot EMUpper = if showEMBands then emUpper1 else Double.NaN;
 plot EMLower = if showEMBands then emLower1 else Double.NaN;
@@ -726,6 +737,7 @@ CamarillaS4.SetStyle(Curve.SHORT_DASH);
 plot PriorDayClose = pdc;
 PriorDayClose.SetDefaultColor(Color.YELLOW);
 PriorDayClose.SetStyle(Curve.FIRM);
+PriorDayClose.SetLineWeight(2);
 
 # ================= Bubbles, labels, alerts =================
 AddChartBubble(TradeCall, low,
@@ -743,7 +755,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.12", Color.DARK_GRAY);
+AddLabel(yes, "V13.13", Color.DARK_GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
