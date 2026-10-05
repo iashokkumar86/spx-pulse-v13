@@ -1,4 +1,4 @@
-# SPX Pulse V13.3 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.4 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
 #
@@ -390,12 +390,14 @@ def breakoutPut = compressed[1] and close < rangeLow10 and !aboveVWAPProxy and
 # participation. Catches trend-day waterfalls that never pull back to the
 # ribbon (the only continuation entry V12/V13.0 had). Requires both EMAs
 # and phase agreement so it can't fire against structure.
+def momoCallRvol = if regime == 1 then 0.90 else 1.10;
+def momoPutRvol = if regime == 2 then 0.90 else 1.10;
 def momoCall = orComplete and close > sessionHigh[1] and close > open and
                bullRibbon and phaseSlope > 0 and aboveVWAPProxy and
-               spyRVOL >= 1.0;
+               spyRVOL >= momoCallRvol;
 def momoPut = orComplete and close < sessionLow[1] and close < open and
               bearRibbon and phaseSlope < 0 and !aboveVWAPProxy and
-              spyRVOL >= 1.0;
+              spyRVOL >= momoPutRvol;
 
 def callCandidate = trendCall or reversalCall or breakoutCall or
                     orbCallSetup or flagCallSetup or gapFadeCall or momoCall;
@@ -458,8 +460,11 @@ def putLocation = if !aboveVWAPProxy and
 
 # Participation: in range regime demand more volume for breakout-type entries.
 def rvolNeed = if regime == 3 then 1.30 else 1.10;
+# Confirmed trend days grind on below-average per-bar volume (volume is
+# front-loaded at the open), so the trend regime grants a participation floor.
 def participationScore = if spyRVOL >= rvolNeed then 10
-                         else if spyRVOL >= 0.80 then 5 else 0;
+                         else if spyRVOL >= 0.80 then 5
+                         else if regime == 1 or regime == 2 then 5 else 0;
 
 # Room: distance to the opposing level / EM exhaustion. Calls near +1 EM and
 # puts near -1 EM get no room credit (chasing an exhausted day).
@@ -468,10 +473,15 @@ def putRoom = close - nearestSupport;
 def roomNeed = Max(5, phaseATR * 1.5);
 # The level stack is dense, so a minor level a few points away shouldn't
 # zero the room score: credit either distance-to-level OR remaining EM.
-def callRoomScore = if emUsed > 0.85 then 0
+# In a confirmed trend regime, continuation at new session extremes is the
+# trade (trend days close near their extremes) - the EM anti-chase rule
+# applies to every other context but must not veto it.
+def callRoomScore = if regime == 1 and close >= sessionHigh - tolerance then 10
+                    else if emUsed > 0.85 then 0
                     else if callRoom >= roomNeed or emUsed < 0.35 then 10
                     else if callRoom >= roomNeed * 0.6 then 5 else 0;
-def putRoomScore = if emUsed < -0.85 then 0
+def putRoomScore = if regime == 2 and close <= sessionLow + tolerance then 10
+                   else if emUsed < -0.85 then 0
                    else if putRoom >= roomNeed or emUsed > -0.35 then 10
                    else if putRoom >= roomNeed * 0.6 then 5 else 0;
 
@@ -671,7 +681,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.3", Color.DARK_GRAY);
+AddLabel(yes, "V13.4", Color.DARK_GRAY);
 AddLabel(showLabels,
     if regime == 1 then "REGIME: TREND UP"
     else if regime == 2 then "REGIME: TREND DOWN"
