@@ -1,4 +1,4 @@
-# SPX Pulse V13.18 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.19 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -126,40 +126,20 @@ def priorATR = if IsNaN(priorATRraw) then
 def newSession = GetYYYYMMDD() != GetYYYYMMDD()[1];
 def tolerance = Max(phaseATR * .12, 1.0);
 
-# ---------------- Participation + VWAP proxy (SPX has no real volume) -----
-# Automatic failover: SPY (primary) -> /ES futures -> SPX itself. A dead
-# feed must degrade the inputs, never silently disable every setup.
-def spyHigh = high(symbol = "SPY");
-def spyLow = low(symbol = "SPY");
-def spyClose = close(symbol = "SPY");
-def spyVolume = volume(symbol = "SPY");
-def spyOK = !IsNaN(spyClose) and !IsNaN(spyVolume) and spyVolume > 0;
-# /ES failover removed: futures data permissions are not guaranteed and the
-# request can raise the chart warning icon. Failover is SPY -> SPX only.
-def esHigh = Double.NaN;
-def esLow = Double.NaN;
-def esClose = Double.NaN;
-def esVolume = Double.NaN;
-def esOK = 0;
-# Final fallback: SPX itself with unit volume (VWAP degrades to a session
-# TWAP and RVOL reads a neutral 1.0).
-def srcClose = if spyOK then spyClose else if esOK then esClose else close;
-def srcTypical = if spyOK then (spyHigh + spyLow + spyClose) / 3
-                 else if esOK then (esHigh + esLow + esClose) / 3
-                 else (high + low + close) / 3;
-def srcVolume = if spyOK then spyVolume else if esOK then esVolume else 1;
-def spyCumulativePV = if newSession then srcTypical * srcVolume
-                      else spyCumulativePV[1] + srcTypical * srcVolume;
-def spyCumulativeVolume = if newSession then srcVolume
-                          else spyCumulativeVolume[1] + srcVolume;
-def spyVWAP = if spyCumulativeVolume > 0 then spyCumulativePV / spyCumulativeVolume else srcClose;
-def aboveVWAPProxy = CompoundValue(1,
-    if IsNaN(srcClose) or IsNaN(spyVWAP) then aboveVWAPProxy[1]
-    else if srcClose >= spyVWAP then 1 else 0, yes);
-def spyRVOLraw = if Average(srcVolume, 20) > 0
-                 then srcVolume / Average(srcVolume, 20)
-                 else 0;
-def spyRVOL = if IsNaN(spyRVOLraw) then 0 else spyRVOLraw;
+# ---------------- Participation + VWAP proxy (SPX-only mode) -------------
+# SPY cross-symbol data is DELAYED on this account while SPX is real-time,
+# and thinkorswim silently refuses to render plots/labels for a study that
+# mixes real-time and delayed feeds (established by bisection probes A-E).
+# All SPY references are therefore removed: the VWAP proxy is a session
+# TWAP of SPX typical price and relative volume is treated as neutral.
+def srcTypical = (high + low + close) / 3;
+def spyCumulativePV = if newSession then srcTypical
+                      else spyCumulativePV[1] + srcTypical;
+def spyCumulativeVolume = if newSession then 1
+                          else spyCumulativeVolume[1] + 1;
+def spyVWAP = spyCumulativePV / spyCumulativeVolume;
+def aboveVWAPProxy = close >= spyVWAP;
+def spyRVOL = 1.0;
 
 def vixClose = close(symbol = "VIX");
 def vixMean = ExpAverage(vixClose, 8);
@@ -212,21 +192,11 @@ def orLow = CompoundValue(1,
             if newSession then low
             else if inOR then Min(orLow[1], low)
             else orLow[1], low);
-def orVolSum = if newSession then srcVolume
-               else if inOR then orVolSum[1] + srcVolume
-               else orVolSum[1];
-def orBarCount = if newSession then 1
-                 else if inOR then orBarCount[1] + 1
-                 else orBarCount[1];
-def orAvgVol = if orBarCount > 0 then orVolSum / orBarCount else spyVolume;
 
 # Breakout quality windows (research: 9:45-10:00 strongest, dead after noon).
 def before1000 = SecondsTillTime(1000) > 0;
 def before1200 = SecondsTillTime(1200) > 0;
-# Volume filter: compare to the rolling 20-bar average (RVOL), not to the
-# opening-range bars themselves — 9:30-9:45 bars carry the day's heaviest
-# volume, so a 1.5x-of-OR filter rejected virtually every later breakout.
-def orbVolumeOK = spyRVOL >= 1.2;
+def orbVolumeOK = yes;  # no reliable volume feed: ORB validated by price/retest only
 def orbBreakUp = orComplete and close > orHigh and close[1] <= orHigh;
 def orbBreakDown = orComplete and close < orLow and close[1] >= orLow;
 # Retest: prior break, then a pullback that holds the OR level.
@@ -417,22 +387,18 @@ def compressed = 2 * StDev(close, 21) <= 2 * phaseATR;
 def rangeHigh10 = Highest(high[1], 10);
 def rangeLow10 = Lowest(low[1], 10);
 def breakoutCall = compressed[1] and close > rangeHigh10 and aboveVWAPProxy and
-                   phaseSlope > 0 and spyRVOL >= 1.10;
+                   phaseSlope > 0;
 def breakoutPut = compressed[1] and close < rangeLow10 and !aboveVWAPProxy and
-                  phaseSlope < 0 and spyRVOL >= 1.10;
+                  phaseSlope < 0;
 
 # 7. Momentum continuation: a decisive push to new session extremes with
 # participation. Catches trend-day waterfalls that never pull back to the
 # ribbon (the only continuation entry V12/V13.0 had). Requires both EMAs
 # and phase agreement so it can't fire against structure.
-def momoCallRvol = if regime == 1 then 0.90 else 1.10;
-def momoPutRvol = if regime == 2 then 0.90 else 1.10;
 def momoCall = orComplete and close > sessionHigh[1] and close > open and
-               bullRibbon and phaseSlope > 0 and aboveVWAPProxy and
-               spyRVOL >= momoCallRvol;
+               bullRibbon and phaseSlope > 0 and aboveVWAPProxy;
 def momoPut = orComplete and close < sessionLow[1] and close < open and
-              bearRibbon and phaseSlope < 0 and !aboveVWAPProxy and
-              spyRVOL >= momoPutRvol;
+              bearRibbon and phaseSlope < 0 and !aboveVWAPProxy;
 
 def callCandidate = trendCall or reversalCall or breakoutCall or
                     orbCallSetup or flagCallSetup or gapFadeCall or momoCall;
@@ -494,12 +460,7 @@ def putLocation = if !aboveVWAPProxy and
                   else if !aboveVWAPProxy then 7 else 0;
 
 # Participation: in range regime demand more volume for breakout-type entries.
-def rvolNeed = if regime == 3 then 1.30 else 1.10;
-# Confirmed trend days grind on below-average per-bar volume (volume is
-# front-loaded at the open), so the trend regime grants a participation floor.
-def participationScore = if spyRVOL >= rvolNeed then 10
-                         else if spyRVOL >= 0.80 then 5
-                         else if regime == 1 or regime == 2 then 5 else 0;
+def participationScore = 7;  # neutral: no reliable volume feed (SPY is delayed on this account)
 
 # Room: distance to the opposing level / EM exhaustion. Calls near +1 EM and
 # puts near -1 EM get no room credit (chasing an exhausted day).
@@ -742,9 +703,9 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.18", Color.YELLOW);
+AddLabel(yes, "V13.19", Color.YELLOW);
 AddChartBubble(IsNaN(close[-1]), high + phaseATR,
-    "V13.18 | lbl " + showLabels + " rib " + showRibbon +
+    "V13.19 | lbl " + showLabels + " rib " + showRibbon +
     " or " + showOpeningRange + " em " + showEMBands +
     " | ORH " + Round(orHigh, 0) + " ORL " + Round(orLow, 0) +
     " PDH " + Round(pdh, 0) + " PDL " + Round(pdl, 0),
@@ -757,12 +718,10 @@ AddLabel(seenETH, "EXTENDED HOURS ON - disable ETH on this chart", Color.RED);
 # Live health of every cross-symbol input the setups depend on. If any
 # reads N/A the candidate engine is running blind - that is the bug.
 AddLabel(showDiagnosticMarkers,
-    "DATA src " + (if spyOK then "SPY" else if esOK then "/ES" else "SPX-TWAP!") +
-    " RVOL " + Round(spyRVOL, 2) +
+    "DATA: SPX-TWAP mode (SPY removed - delayed feed)" +
     (if aboveVWAPProxy then " >VWAP" else " <VWAP") +
-    " | VIX " + (if IsNaN(vixClose) then "N/A!" else "" + Round(vixClose, 2)) +
-    " | VIX1D " + (if IsNaN(vix1dRaw) then "N/A" else "" + Round(vix1dRaw, 2)),
-    if !spyOK or IsNaN(vixClose) then Color.RED else Color.DARK_GRAY);
+    " | VIX " + (if IsNaN(vixClose) then "N/A!" else "" + Round(vixClose, 2)),
+    if IsNaN(vixClose) then Color.RED else Color.DARK_GRAY);
 AddLabel(showContextLabels,
     if regime == 1 then "REGIME: TREND UP"
     else if regime == 2 then "REGIME: TREND DOWN"
