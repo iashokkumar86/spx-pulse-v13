@@ -1,4 +1,4 @@
-# SPX Pulse V13.20 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.21 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -43,7 +43,7 @@ input manualSupport = 0.0;
 input manualResistance = 0.0;
 input eventLockout = no;
 input dailyRiskLockout = no;
-input showEMBands = yes;
+input showEMBands = no;         # EM still used in scoring; lines hidden
 input showCamarilla = no;       # enable when trading range days off these levels
 input showOpeningRange = yes;
 input showRibbon = no;          # off by default: duplicates the Saty ribbon
@@ -697,7 +697,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.20", Color.GRAY);
+AddLabel(yes, "V13.21", Color.GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
