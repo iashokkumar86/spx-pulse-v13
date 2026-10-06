@@ -1,4 +1,4 @@
-# SPX Pulse V13.19 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.20 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -44,9 +44,9 @@ input manualResistance = 0.0;
 input eventLockout = no;
 input dailyRiskLockout = no;
 input showEMBands = yes;
-input showCamarilla = yes;
+input showCamarilla = no;       # enable when trading range days off these levels
 input showOpeningRange = yes;
-input showRibbon = yes;
+input showRibbon = no;          # off by default: duplicates the Saty ribbon
 input showTradeManagement = yes;
 input showLabels = yes;          # the score/signal label
 input showContextLabels = no;    # regime, gap, OR, EM, S/R and session labels
@@ -658,16 +658,10 @@ PriorDayLow.SetLineWeight(2);
 
 plot EMUpper = if showEMBands then emUpper1 else Double.NaN;
 plot EMLower = if showEMBands then emLower1 else Double.NaN;
-plot EMUpperH = if showEMBands then emUpperHalf else Double.NaN;
-plot EMLowerH = if showEMBands then emLowerHalf else Double.NaN;
 EMUpper.SetDefaultColor(Color.DARK_GREEN);
 EMLower.SetDefaultColor(Color.DARK_RED);
-EMUpperH.SetDefaultColor(Color.DARK_GRAY);
-EMLowerH.SetDefaultColor(Color.DARK_GRAY);
 EMUpper.SetStyle(Curve.LONG_DASH);
 EMLower.SetStyle(Curve.LONG_DASH);
-EMUpperH.SetStyle(Curve.SHORT_DASH);
-EMLowerH.SetStyle(Curve.SHORT_DASH);
 
 plot CamarillaR3 = if showCamarilla then camR3 else Double.NaN;
 plot CamarillaS3 = if showCamarilla then camS3 else Double.NaN;
@@ -703,13 +697,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.19", Color.YELLOW);
-AddChartBubble(IsNaN(close[-1]), high + phaseATR,
-    "V13.19 | lbl " + showLabels + " rib " + showRibbon +
-    " or " + showOpeningRange + " em " + showEMBands +
-    " | ORH " + Round(orHigh, 0) + " ORL " + Round(orLow, 0) +
-    " PDH " + Round(pdh, 0) + " PDL " + Round(pdl, 0),
-    Color.YELLOW, yes);
+AddLabel(yes, "V13.20", Color.GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
