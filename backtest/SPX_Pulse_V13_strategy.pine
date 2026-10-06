@@ -1,0 +1,487 @@
+//@version=6
+// SPX Pulse V13.22 — TradingView backtest port of SPX_Pulse_V13.ts
+//
+// APPLY TO: SP:SPX (or your broker's SPX), 3-minute chart, regular session,
+// timezone America/New_York. Open the Strategy Tester tab for results; use
+// "Deep Backtesting" (Premium) to extend history beyond the chart's bar limit.
+//
+// SOURCE OF TRUTH: SPX_Pulse_V13.ts in this repo. This port keeps the signal
+// engine bar-for-bar faithful, with these DOCUMENTED divergences:
+//   D1. 10-min confirmation EMAs come from true completed 10-minute bars
+//       (request.security, no lookahead). thinkorswim evaluates them over
+//       3-min chart bars of the developing 10-min series, which weakens the
+//       filter; this port implements the documented intent.
+//   D2. ADR14 / prior daily ATR are true 14-day aggregates of completed
+//       sessions. The .ts versions average over 3-min bars of the DAY series
+//       (a thinkscript mixed-aggregation quirk), so live values differ.
+//   D3. VIX1D is actually requested here (the live feed lacks it, so the .ts
+//       hardcodes NaN and falls back to VIX). Toggle with useVIX1DExpectedMove.
+//   D4. Exits are executed as orders: half at +1R (limit, touch-based), stop
+//       to breakeven, runner trails max(BE, EMA21 -/+ 0.25*tol) close-based,
+//       runner target touch-based, 20-bar time stop on losers (close-based),
+//       hard exit on the 15:30 bar. Stops are CLOSE-through-level, as in the
+//       study's stopHit definition — not intrabar touch.
+//   D5. One position at a time. A same-side signal while in a trade is
+//       skipped (marked with a tiny triangle if Show skipped = on); an
+//       opposite-side signal closes the open trade and reverses, mirroring
+//       the study's activeSide overwrite.
+//
+// TRADE TAGS: every entry comment is "<C|P> <TAG> <REGIME> s<score> r<R>",
+// e.g. "C ORB TU s83 r2.1". Export the trades list (Strategy Tester ->
+// List of trades -> export) to analyze expectancy per tag x regime x score.
+//
+// WALK-FORWARD: set "Test window" = In-sample, tune inputs, then flip to
+// Out-of-sample WITHOUT touching anything else and read the report.
+strategy("SPX Pulse V13 Backtest", shorttitle = "PulseV13-BT", overlay = true,
+     process_orders_on_close = true, calc_on_every_tick = false,
+     default_qty_type = strategy.fixed, default_qty_value = 2, pyramiding = 0,
+     initial_capital = 1000000, max_labels_count = 500)
+
+// ---------------- Inputs (mirrors the .ts, plus backtest controls) --------
+minimumScore       = input.int(70,  "Minimum score", minval = 0, maxval = 100)
+timeStopBars       = input.int(20,  "Time stop (bars)", minval = 1)
+minRewardRisk      = input.float(1.5, "Min reward:risk (0 = off)", step = 0.1)
+signalCooldownBars = input.int(10,  "Signal cooldown (bars)", minval = 0)
+useTenMinuteConfirmation = input.bool(true,  "10-min ribbon confirmation")
+useVIXConfirmation       = input.bool(true,  "VIX gate (VIX vs 8-bar EMA)")
+useVIX1DExpectedMove     = input.bool(true,  "Expected move from VIX1D (else VIX)")
+useManualGEX  = input.bool(false, "Use manual GEX levels")
+gammaFlip     = input.float(0.0, "Gamma flip")
+callWall      = input.float(0.0, "Call wall")
+putWall       = input.float(0.0, "Put wall")
+overnightHigh = input.float(0.0, "Overnight high (manual)")
+overnightLow  = input.float(0.0, "Overnight low (manual)")
+manualSupport    = input.float(0.0, "Manual support")
+manualResistance = input.float(0.0, "Manual resistance")
+
+grpBT = "Backtest controls"
+testWindow   = input.string("All", "Test window", options = ["All", "In-sample", "Out-of-sample"], group = grpBT)
+splitDate    = input.time(timestamp("2025-12-01T00:00:00-05:00"), "In/out-of-sample split date", group = grpBT)
+exitEngine   = input.string("Scale+Trail (V13)", "Exit engine", options = ["Scale+Trail (V13)", "Fixed target only"], group = grpBT,
+     tooltip = "A/B for handoff question 6: V13 scale-half/trail vs plain stop-and-target")
+useLunchHaircut = input.bool(true, "12:00-13:00 score x0.85", group = grpBT)
+undecidedBump   = input.int(5, "Score bump when regime UNDECIDED", group = grpBT)
+emNoRoomCut     = input.float(0.85, "No room credit past this EM used", step = 0.05, group = grpBT)
+emTrendCap      = input.float(1.0,  "Trend override allowed inside this EM", step = 0.05, group = grpBT)
+wWithTrendIn    = input.int(30, "Setup wt: with-trend in trend regime", group = grpBT)
+wCounterIn      = input.int(8,  "Setup wt: counter in trend regime", group = grpBT)
+wWithTrendRange = input.int(10, "Setup wt: with-trend in range regime", group = grpBT)
+wCounterRange   = input.int(30, "Setup wt: counter in range regime", group = grpBT)
+wUndecided      = input.int(18, "Setup wt: any setup, regime undecided", group = grpBT)
+showSkipped     = input.bool(false, "Mark skipped signals", group = grpBT)
+showLevels      = input.bool(true,  "Plot OR / PDH / PDL / PDC", group = grpBT)
+
+inWindow = testWindow == "All" ? true : testWindow == "In-sample" ? time < splitDate : time >= splitDate
+
+// ---------------- Session clock (bar OPEN time, like SecondsFromTime) -----
+tzNY = "America/New_York"
+minsNY     = hour(time, tzNY) * 60 + minute(time, tzNY)
+newSession = session.isfirstbar
+inOR       = minsNY >= 570 and minsNY < 585          // 09:30-09:45
+orComplete = minsNY >= 585
+after1030  = minsNY >= 630
+before1000 = minsNY < 600
+before1200 = minsNY < 720
+eligibleTime = minsNY >= 585 and minsNY < 915        // 09:45-15:15
+lunch        = minsNY >= 720 and minsNY < 780        // 12:00-13:00
+exitWindow   = minsNY >= 930                          // 15:30
+
+// ---------------- Core series --------------------------------------------
+phaseATR   = ta.rma(ta.tr, 14)
+phasePivot = ta.ema(close, 21)
+phaseRaw   = phaseATR != 0 ? ((close - phasePivot) / (3 * phaseATR)) * 100 : 0
+phase      = ta.ema(phaseRaw, 3)
+phaseSlope = phase - phase[1]
+phaseBull  = phaseSlope > 0 and phase > -61.8
+phaseBear  = phaseSlope < 0 and phase < 61.8
+leavingDownExtreme = ta.crossover(phase, -61.8)
+leavingUpExtreme   = ta.crossunder(phase, 61.8)
+
+ema8   = ta.ema(close, 8)
+ema13  = ta.ema(close, 13)
+ema21v = ta.ema(close, 21)
+ema48  = ta.ema(close, 48)
+bullRibbon = ema8 > ema13 and ema13 > ema21v and ema21v > ema48
+bearRibbon = ema8 < ema13 and ema13 < ema21v and ema21v < ema48
+
+// Divergence D1: true completed 10-min EMAs, non-repainting.
+e8_10  = request.security(syminfo.tickerid, "10", ta.ema(close, 8)[1],  lookahead = barmerge.lookahead_on)
+e13_10 = request.security(syminfo.tickerid, "10", ta.ema(close, 13)[1], lookahead = barmerge.lookahead_on)
+e21_10 = request.security(syminfo.tickerid, "10", ta.ema(close, 21)[1], lookahead = barmerge.lookahead_on)
+e48_10 = request.security(syminfo.tickerid, "10", ta.ema(close, 48)[1], lookahead = barmerge.lookahead_on)
+bull10 = e8_10 > e13_10 and e13_10 > e21_10 and e21_10 > e48_10
+bear10 = e8_10 < e13_10 and e13_10 < e21_10 and e21_10 < e48_10
+bullRegimeTrend = bullRibbon and (not useTenMinuteConfirmation or bull10)
+bearRegimeTrend = bearRibbon and (not useTenMinuteConfirmation or bear10)
+
+// ---------------- Day-level state (no lookahead; prior-day = completed) ---
+var float sessHigh = na
+var float sessLow = na
+var float dayOpen = na
+var float closePrevSession = na   // yesterday's final close as of each session's first bar
+var float pdh = na
+var float pdl = na
+var float pdc = na
+var float adr14 = na
+var float priorATR = na
+var float wDayATR = na
+var float[] dayRangesArr = array.new_float()
+
+float sessHighPrev = sessHigh   // value as of previous bar (ToS sessionHigh[1])
+float sessLowPrev  = sessLow
+
+if newSession
+    if not na(sessHigh)
+        float dRange = sessHigh - sessLow
+        float dTR = na(pdc) ? dRange : math.max(sessHigh - sessLow, math.max(math.abs(sessHigh - pdc), math.abs(sessLow - pdc)))
+        array.push(dayRangesArr, dRange)
+        if array.size(dayRangesArr) > 14
+            array.shift(dayRangesArr)
+        wDayATR := na(wDayATR) ? dTR : (wDayATR * 13 + dTR) / 14
+        // prior-day levels roll over BEFORE today's trackers reset
+        pdc := closePrevSession
+        pdh := sessHigh
+        pdl := sessLow
+    adr14 := array.size(dayRangesArr) > 0 ? array.avg(dayRangesArr) : na
+    priorATR := wDayATR
+    sessHigh := high
+    sessLow  := low
+    dayOpen  := open
+else
+    sessHigh := math.max(nz(sessHigh, high), high)
+    sessLow  := math.min(nz(sessLow, low), low)
+closePrevSession := close   // updated after the day-roll above, so at each session's first bar it still held the prior session's final close
+
+// Fallbacks mirroring the .ts NaN armor
+float adr14f    = not na(adr14) and adr14 > 0 ? adr14 : nz(sessHighPrev - sessLowPrev, 0)
+float priorATRf = not na(priorATR) and priorATR > 0 ? priorATR : 40 * phaseATR
+
+tolerance = math.max(phaseATR * 0.12, 1.0)
+
+// ---------------- Participation + VWAP proxy (SPX TWAP, per the .ts) ------
+srcTypical = (high + low + close) / 3
+var float cumPV = na
+var float cumN = na
+cumPV := newSession ? srcTypical : nz(cumPV) + srcTypical
+cumN  := newSession ? 1 : nz(cumN) + 1
+twapProxy = cumPV / cumN
+aboveVWAPProxy = close >= twapProxy
+
+// ---------------- VIX gate + expected move --------------------------------
+vixClose = request.security("CBOE:VIX", timeframe.period, close, ignore_invalid_symbol = true)
+vixMean  = ta.ema(nz(vixClose, 20), 8)
+vixDataOK = not na(vixClose) and not na(vixMean)
+vixCallOK = not useVIXConfirmation or not vixDataOK or vixClose <= vixMean
+vixPutOK  = not useVIXConfirmation or not vixDataOK or vixClose >= vixMean
+
+vix1dRaw  = request.security("CBOE:VIX1D", timeframe.period, close, ignore_invalid_symbol = true)
+vix1dUsable = not na(vix1dRaw) and vix1dRaw > 0
+vixUsable   = not na(vixClose) and vixClose > 0
+vixForEM = useVIX1DExpectedMove and vix1dUsable ? vix1dRaw : vixUsable ? vixClose : 0
+emPtsRaw = dayOpen * (vixForEM / 100) / math.sqrt(252)
+emPts = na(emPtsRaw) or emPtsRaw <= 0 ? priorATRf * 0.5 : emPtsRaw
+emUpper1 = dayOpen + emPts
+emLower1 = dayOpen - emPts
+emUsed = emPts > 0 ? (close - dayOpen) / emPts : 0
+emUsed := na(emUsed) ? 0 : emUsed
+
+// ---------------- Gap classifier ------------------------------------------
+gapPts = dayOpen - pdc
+gapPct = not na(pdc) and pdc > 0 ? 100 * gapPts / pdc : 0
+gapUp    = gapPct >= 0.02
+gapDown  = gapPct <= -0.02
+gapAbs   = math.abs(gapPct)
+gapMicro  = gapAbs < 0.20
+gapMedium = gapAbs >= 0.20 and gapAbs <= 0.40
+gapLarge  = gapAbs > 0.40
+gapFillProgress = gapUp and gapPts != 0 ? math.min(1, math.max(0, (dayOpen - sessLow) / gapPts)) :
+                  gapDown and gapPts != 0 ? math.min(1, math.max(0, (sessHigh - dayOpen) / (-gapPts))) : 1
+gapFilled = (gapUp and sessLow <= pdc) or (gapDown and sessHigh >= pdc)
+gapFadeAlive = not gapLarge and (gapUp or gapDown) and not gapFilled and (not after1030 or gapFillProgress >= 0.30)
+gapAndGoUp   = gapLarge and gapUp and gapFillProgress < 0.30
+gapAndGoDown = gapLarge and gapDown and gapFillProgress < 0.30
+
+// ---------------- 15-minute opening range ---------------------------------
+var float orHigh = na
+var float orLow = na
+if newSession
+    orHigh := high
+    orLow  := low
+else if inOR
+    orHigh := math.max(nz(orHigh, high), high)
+    orLow  := math.min(nz(orLow, low), low)
+
+orbBreakUp   = orComplete and close > orHigh and close[1] <= orHigh
+orbBreakDown = orComplete and close < orLow and close[1] >= orLow
+var bool brokeUpToday = false
+var bool brokeDownToday = false
+brokeUpToday   := newSession ? false : orbBreakUp ? true : brokeUpToday
+brokeDownToday := newSession ? false : orbBreakDown ? true : brokeDownToday
+orbRetestUp   = brokeUpToday and close > orHigh and low <= orHigh + tolerance and close > open
+orbRetestDown = brokeDownToday and close < orLow and high >= orLow - tolerance and close < open
+orbCallSetup = before1200 and (orbBreakUp or orbRetestUp)
+orbPutSetup  = before1200 and (orbBreakDown or orbRetestDown)
+orbPrimeTime = orComplete and before1000
+
+// ---------------- Level stack + nearest S/R -------------------------------
+pRange = pdh - pdl
+camR3 = pdc + pRange * 1.1 / 4
+camR4 = pdc + pRange * 1.1 / 2
+camS3 = pdc - pRange * 1.1 / 4
+camS4 = pdc - pRange * 1.1 / 2
+fib382 = pdl + pRange * 0.382
+fib500 = pdl + pRange * 0.500
+fib618 = pdl + pRange * 0.618
+
+belowOr(lvl, ref) => not na(lvl) and lvl > 0 and lvl < ref ? lvl : -999999.0
+aboveOr(lvl, ref) => not na(lvl) and lvl > 0 and lvl > ref ? lvl : 999999.0
+nsRaw = math.max(math.max(math.max(math.max(belowOr(pdl, close), belowOr(pdh, close)), math.max(belowOr(pdc, close), belowOr(camS3, close))),
+         math.max(math.max(belowOr(camS4, close), belowOr(fib382, close)), math.max(belowOr(fib500, close), belowOr(fib618, close)))),
+         math.max(math.max(belowOr(overnightLow, close), belowOr(overnightHigh, close)), math.max(belowOr(orLow, close), belowOr(manualSupport, close))))
+nrRaw = math.min(math.min(math.min(math.min(aboveOr(pdl, close), aboveOr(pdh, close)), math.min(aboveOr(pdc, close), aboveOr(camR3, close))),
+         math.min(math.min(aboveOr(camR4, close), aboveOr(fib382, close)), math.min(aboveOr(fib500, close), aboveOr(fib618, close)))),
+         math.min(math.min(aboveOr(overnightLow, close), aboveOr(overnightHigh, close)), math.min(aboveOr(orHigh, close), aboveOr(manualResistance, close))))
+nearestSupport    = nsRaw > -999999 ? nsRaw : close - priorATRf * 0.5
+nearestResistance = nrRaw < 999999 ? nrRaw : close + priorATRf * 0.5
+
+// ---------------- Flag detector -------------------------------------------
+pole10Up = close - ta.lowest(low, 10)
+pole10Dn = ta.highest(high, 10) - close
+impulseUp = pole10Up >= 2 * phaseATR and close > open
+impulseDn = pole10Dn >= 2 * phaseATR and close < open
+var float poleTopRec = na
+var float poleBotForUp = na
+var float poleBotRec = na
+var float poleTopForDn = na
+var int barsSinceImpUp = 100000
+var int barsSinceImpDn = 100000
+poleTopRec   := impulseUp ? high : poleTopRec
+poleBotForUp := impulseUp ? ta.lowest(low, 10) : poleBotForUp
+poleBotRec   := impulseDn ? low : poleBotRec
+poleTopForDn := impulseDn ? ta.highest(high, 10) : poleTopForDn
+barsSinceImpUp := impulseUp ? 0 : barsSinceImpUp + 1
+barsSinceImpDn := impulseDn ? 0 : barsSinceImpDn + 1
+poleHtUp = poleTopRec - poleBotForUp
+poleHtDn = poleTopForDn - poleBotRec
+flagWindowUp = barsSinceImpUp >= 4 and barsSinceImpUp <= 15
+flagWindowDn = barsSinceImpDn >= 4 and barsSinceImpDn <= 15
+flagHoldsUp = flagWindowUp and ta.lowest(low, 4) > poleTopRec - 0.5 * poleHtUp and ta.highest(high, 4) - ta.lowest(low, 4) < 0.6 * poleHtUp
+flagHoldsDn = flagWindowDn and ta.highest(high, 4) < poleBotRec + 0.5 * poleHtDn and ta.highest(high, 4) - ta.lowest(low, 4) < 0.6 * poleHtDn
+flagCallSetup = flagHoldsUp[1] and close > ta.highest(high, 4)[1] and close > open
+flagPutSetup  = flagHoldsDn[1] and close < ta.lowest(low, 4)[1] and close < open
+flagCallTarget = ta.highest(high, 4)[1] + poleHtUp
+flagPutTarget  = ta.lowest(low, 4)[1] - poleHtDn
+
+// ---------------- Regime gate ----------------------------------------------
+var float fhHigh = na
+var float fhLow = na
+if newSession
+    fhHigh := high
+    fhLow  := low
+else if not after1030
+    fhHigh := math.max(nz(fhHigh, high), high)
+    fhLow  := math.min(nz(fhLow, low), low)
+fhRangePctADR = adr14f > 0 ? (fhHigh - fhLow) / adr14f : 0
+insidePriorRange = close < pdh and close > pdl
+gexTrendy = useManualGEX and gammaFlip > 0 and close < gammaFlip
+gexRangy  = useManualGEX and gammaFlip > 0 and close > gammaFlip
+
+trendUpEvidence = (gapAndGoUp ? 2 : 0) + (after1030 and fhRangePctADR > 0.45 and close > orHigh ? 2 : 0) +
+     (close > pdh ? 1 : 0) + (bullRegimeTrend ? 1 : 0) + (emUsed > 0.6 ? 1 : 0) + (gexTrendy and close > dayOpen ? 1 : 0)
+trendDnEvidence = (gapAndGoDown ? 2 : 0) + (after1030 and fhRangePctADR > 0.45 and close < orLow ? 2 : 0) +
+     (close < pdl ? 1 : 0) + (bearRegimeTrend ? 1 : 0) + (emUsed < -0.6 ? 1 : 0) + (gexTrendy and close < dayOpen ? 1 : 0)
+rangeEvidence = (gapMicro ? 1 : 0) + (after1030 and adr14f > 0 and fhRangePctADR > 0 and fhRangePctADR < 0.35 ? 2 : 0) +
+     (insidePriorRange ? 1 : 0) + (gexRangy ? 1 : 0) + (math.abs(emUsed) < 0.35 and after1030 ? 1 : 0)
+
+regime = not orComplete ? 0 :
+     trendUpEvidence >= 3 and trendUpEvidence > trendDnEvidence and trendUpEvidence >= rangeEvidence ? 1 :
+     trendDnEvidence >= 3 and trendDnEvidence > trendUpEvidence and trendDnEvidence >= rangeEvidence ? 2 :
+     rangeEvidence >= 3 ? 3 : 0
+
+sessionMult = not eligibleTime ? 0.0 : lunch and useLunchHaircut ? 0.85 : 1.0
+lockoutCondition = not eligibleTime
+
+// ---------------- Setups ----------------------------------------------------
+trendCall = bullRegimeTrend and phaseBull and aboveVWAPProxy and
+     (low <= ema13 + tolerance or (regime == 1 and low <= ema8 + tolerance)) and close > ema8 and close > open
+trendPut = bearRegimeTrend and phaseBear and not aboveVWAPProxy and
+     (high >= ema13 - tolerance or (regime == 2 and high >= ema8 - tolerance)) and close < ema8 and close < open
+
+nearSupport    = math.abs(low - nearestSupport) <= tolerance or low <= emLower1 + tolerance
+nearResistance = math.abs(high - nearestResistance) <= tolerance or high >= emUpper1 - tolerance
+reversalCall = nearSupport and close > nearestSupport and close > open and phaseSlope > 0 and (leavingDownExtreme or phase < -23.6)
+reversalPut  = nearResistance and close < nearestResistance and close < open and phaseSlope < 0 and (leavingUpExtreme or phase > 23.6)
+
+gapFadePut  = gapFadeAlive and gapUp and close < dayOpen and phaseSlope < 0 and close < open and not aboveVWAPProxy
+gapFadeCall = gapFadeAlive and gapDown and close > dayOpen and phaseSlope > 0 and close > open and aboveVWAPProxy
+
+compressed = 2 * ta.stdev(close, 21) <= 2 * phaseATR
+rangeHigh10 = ta.highest(high, 10)[1]
+rangeLow10  = ta.lowest(low, 10)[1]
+breakoutCall = compressed[1] and close > rangeHigh10 and aboveVWAPProxy and phaseSlope > 0
+breakoutPut  = compressed[1] and close < rangeLow10 and not aboveVWAPProxy and phaseSlope < 0
+
+momoCall = orComplete and not na(sessHighPrev) and close > sessHighPrev and close > open and bullRibbon and phaseSlope > 0 and aboveVWAPProxy
+momoPut  = orComplete and not na(sessLowPrev) and close < sessLowPrev and close < open and bearRibbon and phaseSlope < 0 and not aboveVWAPProxy
+
+callCandidate = trendCall or reversalCall or breakoutCall or orbCallSetup or flagCallSetup or gapFadeCall or momoCall
+putCandidate  = trendPut or reversalPut or breakoutPut or orbPutSetup or flagPutSetup or gapFadePut or momoPut
+
+// ---------------- Regime-weighted scoring ----------------------------------
+wTrendSetup = regime == 1 or regime == 2 ? wWithTrendIn : regime == 3 ? wWithTrendRange : wUndecided
+wFadeSetup  = regime == 3 ? wCounterRange : regime == 1 or regime == 2 ? wCounterIn : wUndecided
+orbBonus = orbPrimeTime ? 4 : 0
+
+callSetupScore = math.min(30, math.max(math.max(math.max(trendCall or breakoutCall ? wTrendSetup : 0,
+     momoCall ? math.max(0, wTrendSetup - 4) : 0), orbCallSetup ? math.min(30, wTrendSetup + orbBonus) : 0),
+     math.max(flagCallSetup ? wTrendSetup : 0, reversalCall or gapFadeCall ? wFadeSetup : 0)))
+putSetupScore = math.min(30, math.max(math.max(math.max(trendPut or breakoutPut ? wTrendSetup : 0,
+     momoPut ? math.max(0, wTrendSetup - 4) : 0), orbPutSetup ? math.min(30, wTrendSetup + orbBonus) : 0),
+     math.max(flagPutSetup ? wTrendSetup : 0, reversalPut or gapFadePut ? wFadeSetup : 0)))
+
+callAlign = bullRegimeTrend and phaseBull ? 20 : bullRibbon and phaseSlope > 0 ? 12 : bullRibbon or phaseBull ? 6 : 0
+putAlign  = bearRegimeTrend and phaseBear ? 20 : bearRibbon and phaseSlope < 0 ? 12 : bearRibbon or phaseBear ? 6 : 0
+alignMult = regime == 3 ? 0.5 : 1.0
+
+callLocation = aboveVWAPProxy and (math.abs(low - ema13) <= tolerance or math.abs(low - nearestSupport) <= tolerance) ? 15 :
+     reversalCall or gapFadeCall ? 12 : aboveVWAPProxy ? 7 : 0
+putLocation = not aboveVWAPProxy and (math.abs(high - ema13) <= tolerance or math.abs(high - nearestResistance) <= tolerance) ? 15 :
+     reversalPut or gapFadePut ? 12 : not aboveVWAPProxy ? 7 : 0
+
+participationScore = 7
+
+callRoom = nearestResistance - close
+putRoom  = close - nearestSupport
+roomNeed = math.max(5, phaseATR * 1.5)
+callRoomScore = regime == 1 and close >= sessHigh - tolerance and emUsed <= emTrendCap ? 10 :
+     emUsed > emNoRoomCut ? 0 : callRoom >= roomNeed or emUsed < 0.35 ? 10 : callRoom >= roomNeed * 0.6 ? 5 : 0
+putRoomScore = regime == 2 and close <= sessLow + tolerance and emUsed >= -emTrendCap ? 10 :
+     emUsed < -emNoRoomCut ? 0 : putRoom >= roomNeed or emUsed > -0.35 ? 10 : putRoom >= roomNeed * 0.6 ? 5 : 0
+
+callGEXScore = useManualGEX and gammaFlip > 0 and close > gammaFlip and callWall > close ? 5 : 0
+putGEXScore  = useManualGEX and gammaFlip > 0 and close < gammaFlip and putWall > 0 and putWall < close ? 5 : 0
+callVolScore = vixCallOK ? 10 : 0
+putVolScore  = vixPutOK ? 10 : 0
+
+callScore = math.round(sessionMult * (nz(callSetupScore) + nz(callAlign * alignMult) + nz(callLocation) + participationScore + nz(callRoomScore) + callGEXScore + callVolScore))
+putScore  = math.round(sessionMult * (nz(putSetupScore) + nz(putAlign * alignMult) + nz(putLocation) + participationScore + nz(putRoomScore) + putGEXScore + putVolScore))
+
+effMinScore = regime == 0 ? minimumScore + undecidedBump : minimumScore
+
+// ---------------- Geometry gate ---------------------------------------------
+callStopCalc = math.min(ta.lowest(low, 3), nearestSupport) - 0.25 * tolerance
+putStopCalc  = math.max(ta.highest(high, 3), nearestResistance) + 0.25 * tolerance
+callStopF = math.max(callStopCalc, close - 2.2 * phaseATR)
+putStopF  = math.min(putStopCalc, close + 2.2 * phaseATR)
+callTargetRaw = flagCallSetup ? math.min(flagCallTarget, emUpper1) : emUpper1 > close + tolerance ? math.min(nearestResistance, emUpper1) : nearestResistance
+putTargetRaw  = flagPutSetup ? math.max(flagPutTarget, emLower1) : emLower1 < close - tolerance ? math.max(nearestSupport, emLower1) : nearestSupport
+callTargetCalc = math.max(callTargetRaw, close + tolerance)
+putTargetCalc  = math.min(putTargetRaw, close - tolerance)
+callRR = close - callStopF > 0 ? (callTargetCalc - close) / (close - callStopF) : 0
+putRR  = putStopF - close > 0 ? (close - putTargetCalc) / (putStopF - close) : 0
+callRROK = minRewardRisk == 0 or nz(callRR) >= minRewardRisk
+putRROK  = minRewardRisk == 0 or nz(putRR) >= minRewardRisk
+
+// ---------------- Confirmation + cooldown -----------------------------------
+confirmedCall = not lockoutCondition and nz(callCandidate[1] ? 1 : 0) == 1 and nz(callRROK[1] ? 1 : 0) == 1 and nz(callScore[1]) >= effMinScore and close > close[1]
+confirmedPut  = not lockoutCondition and nz(putCandidate[1] ? 1 : 0) == 1 and nz(putRROK[1] ? 1 : 0) == 1 and nz(putScore[1]) >= effMinScore and close < close[1]
+rawCall = confirmedCall and not confirmedCall[1]
+rawPut  = confirmedPut and not confirmedPut[1]
+var int sinceCall = 100000
+var int sincePut  = 100000
+sinceCall := rawCall and sinceCall >= signalCooldownBars ? 0 : sinceCall + 1
+sincePut  := rawPut and sincePut >= signalCooldownBars ? 0 : sincePut + 1
+tradeCall = rawCall and sinceCall == 0
+tradePut  = rawPut and sincePut == 0
+
+// Tag the signal with its setup (evaluated on the candidate bar, [1])
+callTag = orbCallSetup[1] ? "ORB" : flagCallSetup[1] ? "FLAG" : reversalCall[1] ? "LVL" : gapFadeCall[1] ? "GAPFADE" : momoCall[1] and not trendCall[1] ? "MOMO" : breakoutCall[1] and not trendCall[1] ? "BRKOUT" : "TREND"
+putTag  = orbPutSetup[1] ? "ORB" : flagPutSetup[1] ? "FLAG" : reversalPut[1] ? "LVL" : gapFadePut[1] ? "GAPFADE" : momoPut[1] and not trendPut[1] ? "MOMO" : breakoutPut[1] and not trendPut[1] ? "BRKOUT" : "TREND"
+regTag = regime == 1 ? "TU" : regime == 2 ? "TD" : regime == 3 ? "RG" : "UN"
+
+// ---------------- Trade management (orders) ---------------------------------
+var float heldStop = na
+var float heldTarget = na
+var float heldEntry = na
+var float heldRisk = na
+var bool hit1R = false
+var int entryBar = na
+inLong  = strategy.position_size > 0
+inShort = strategy.position_size < 0
+
+// Entries (and study-faithful reversal on opposite signal)
+if tradeCall and inWindow
+    if inLong and showSkipped
+        label.new(bar_index, low, "skip C", style = label.style_triangleup, size = size.tiny, color = color.new(color.aqua, 70))
+    if not inLong
+        strategy.entry("C", strategy.long, comment = "C " + callTag + " " + regTag + " s" + str.tostring(math.round(nz(callScore[1]))) + " r" + str.tostring(callRR[1], "#.#"))
+        heldStop := callStopF
+        heldTarget := callTargetCalc
+        heldEntry := close
+        heldRisk := close - callStopF
+        hit1R := false
+        entryBar := bar_index
+if tradePut and inWindow
+    if inShort and showSkipped
+        label.new(bar_index, high, "skip P", style = label.style_triangledown, size = size.tiny, color = color.new(color.fuchsia, 70))
+    if not inShort
+        strategy.entry("P", strategy.short, comment = "P " + putTag + " " + regTag + " s" + str.tostring(math.round(nz(putScore[1]))) + " r" + str.tostring(putRR[1], "#.#"))
+        heldStop := putStopF
+        heldTarget := putTargetCalc
+        heldEntry := close
+        heldRisk := putStopF - close
+        hit1R := false
+        entryBar := bar_index
+
+// 1R detection: touch-based, like the study's hit1R (high/low vs entry +/- risk),
+// starting the bar after entry. Works identically in both exit-engine modes.
+useScaleTrail = exitEngine == "Scale+Trail (V13)"
+barsInTrade = not na(entryBar) ? bar_index - entryBar : 0
+if strategy.position_size != 0 and bar_index > entryBar and not hit1R
+    if strategy.position_size > 0 and high >= heldEntry + heldRisk
+        hit1R := true
+    if strategy.position_size < 0 and low <= heldEntry - heldRisk
+        hit1R := true
+
+if strategy.position_size != 0 and bar_index > entryBar
+    if inLong
+        if useScaleTrail
+            strategy.exit("tp1", from_entry = "C", qty_percent = 50, limit = heldEntry + heldRisk, comment = "1R SCALE")
+        strategy.exit("tgt", from_entry = "C", limit = heldTarget, comment = "TARGET")
+        trailLine = math.max(heldEntry, ema21v - 0.25 * tolerance)
+        if exitWindow
+            strategy.close("C", comment = "1530 EXIT")
+        else if useScaleTrail and hit1R and close < trailLine
+            strategy.close("C", comment = "TRAIL")
+        else if not hit1R and close < heldStop
+            strategy.close("C", comment = "STOP")
+        else if hit1R and not useScaleTrail and close < heldStop
+            strategy.close("C", comment = "STOP")
+        else if not hit1R and barsInTrade >= timeStopBars
+            strategy.close("C", comment = "TIMESTOP")
+    if inShort
+        if useScaleTrail
+            strategy.exit("tp1", from_entry = "P", qty_percent = 50, limit = heldEntry - heldRisk, comment = "1R SCALE")
+        strategy.exit("tgt", from_entry = "P", limit = heldTarget, comment = "TARGET")
+        trailLineS = math.min(heldEntry, ema21v + 0.25 * tolerance)
+        if exitWindow
+            strategy.close("P", comment = "1530 EXIT")
+        else if useScaleTrail and hit1R and close > trailLineS
+            strategy.close("P", comment = "TRAIL")
+        else if not hit1R and close > heldStop
+            strategy.close("P", comment = "STOP")
+        else if hit1R and not useScaleTrail and close > heldStop
+            strategy.close("P", comment = "STOP")
+        else if not hit1R and barsInTrade >= timeStopBars
+            strategy.close("P", comment = "TIMESTOP")
+
+// ---------------- Reference plots -------------------------------------------
+plot(showLevels and orComplete ? orHigh : na, "OR High", color.orange, 2, plot.style_linebr)
+plot(showLevels and orComplete ? orLow : na, "OR Low", color.new(color.fuchsia, 20), 2, plot.style_linebr)
+plot(showLevels ? pdh : na, "PDH", color.new(color.red, 40), 1, plot.style_linebr)
+plot(showLevels ? pdl : na, "PDL", color.new(color.green, 40), 1, plot.style_linebr)
+plot(showLevels ? pdc : na, "PDC", color.new(color.yellow, 30), 1, plot.style_linebr)
+plot(strategy.position_size != 0 ? heldStop : na, "Stop", color.red, 1, plot.style_circles)
+plot(strategy.position_size != 0 ? heldTarget : na, "Target", color.green, 1, plot.style_circles)
+plotshape(tradeCall, "Call signal", shape.triangleup, location.belowbar, color.aqua, size = size.small)
+plotshape(tradePut, "Put signal", shape.triangledown, location.abovebar, color.fuchsia, size = size.small)
