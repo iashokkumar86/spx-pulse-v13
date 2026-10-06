@@ -1,4 +1,4 @@
-# SPX Pulse V13.21 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.22 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -677,6 +677,14 @@ CamarillaR4.SetStyle(Curve.SHORT_DASH);
 CamarillaS4.SetStyle(Curve.SHORT_DASH);
 
 plot PriorDayClose = pdc;
+
+# Name tags on the right edge so each V13 level is identifiable at a glance.
+def lastBar = IsNaN(close[-1]);
+AddChartBubble(lastBar and showOpeningRange and orComplete, orHigh, "ORH", Color.ORANGE, yes);
+AddChartBubble(lastBar and showOpeningRange and orComplete, orLow, "ORL", Color.PINK, no);
+AddChartBubble(lastBar, pdh, "PDH", Color.LIGHT_RED, yes);
+AddChartBubble(lastBar, pdl, "PDL", Color.LIGHT_GREEN, no);
+AddChartBubble(lastBar, pdc, "PDC", Color.YELLOW, yes);
 PriorDayClose.SetDefaultColor(Color.YELLOW);
 PriorDayClose.SetStyle(Curve.FIRM);
 PriorDayClose.SetLineWeight(2);
@@ -697,7 +705,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.21", Color.GRAY);
+AddLabel(yes, "V13.22", Color.GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
