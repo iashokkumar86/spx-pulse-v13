@@ -1,4 +1,4 @@
-# SPX Pulse V13.15 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.16 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -135,11 +135,13 @@ def spyLow = low(symbol = "SPY");
 def spyClose = close(symbol = "SPY");
 def spyVolume = volume(symbol = "SPY");
 def spyOK = !IsNaN(spyClose) and !IsNaN(spyVolume) and spyVolume > 0;
-def esHigh = high(symbol = "/ES");
-def esLow = low(symbol = "/ES");
-def esClose = close(symbol = "/ES");
-def esVolume = volume(symbol = "/ES");
-def esOK = !IsNaN(esClose) and !IsNaN(esVolume) and esVolume > 0;
+# /ES failover removed: futures data permissions are not guaranteed and the
+# request can raise the chart warning icon. Failover is SPY -> SPX only.
+def esHigh = Double.NaN;
+def esLow = Double.NaN;
+def esClose = Double.NaN;
+def esVolume = Double.NaN;
+def esOK = 0;
 # Final fallback: SPX itself with unit volume (VWAP degrades to a session
 # TWAP and RVOL reads a neutral 1.0).
 def srcClose = if spyOK then spyClose else if esOK then esClose else close;
@@ -244,7 +246,9 @@ def orbPrimeTime = orComplete and before1000;   # highest-stat window
 
 # ================= MODULE 3: Expected-move bands from VIX1D =================
 # EM = SPX_open * (VIX1D/100) / sqrt(252). ~68% of sessions close inside +-1 EM.
-def vix1dRaw = close(symbol = "VIX1D");
+# VIX1D is not available on this data feed; requesting it raises the
+# chart warning icon, so the EM uses VIX directly.
+def vix1dRaw = Double.NaN;
 # IsNaN-first branching throughout: see the adr14 note above.
 def vix1dUsable = if IsNaN(vix1dRaw) then 0 else if vix1dRaw > 0 then 1 else 0;
 def vixUsable = if IsNaN(vixClose) then 0 else if vixClose > 0 then 1 else 0;
@@ -755,7 +759,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.15", Color.DARK_GRAY);
+AddLabel(yes, "V13.16", Color.DARK_GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
