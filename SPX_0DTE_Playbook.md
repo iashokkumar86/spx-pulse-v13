@@ -6,6 +6,66 @@ nothing. **The no-trade signal is where the money is.**
 
 ---
 
+## 0. THE V13.23 RULESET (current — supersedes anything below that conflicts)
+
+Updated 2026-10-06 from the ten-year TradingView backtest
+(backtest/REPORT-2026-10-06.md). Four runs, walk-forward validated. Where an
+older section of this playbook says "scale half at 1R and trail", "close
+through the stop", or "UNDECIDED needs a higher score" — this section wins.
+
+**Before the open (5 min)**
+1. Chart: SPX, 3-min, 20 days, RTH only, V13.23 loaded. Check the calendar;
+   on CPI/FOMC days set `eventLockout = yes` until 30+ min after the release.
+2. Optional: GEX levels and overnight H/L into the inputs.
+
+**9:30–9:45 — watch, never trade.** The study is building the opening range,
+gap stats, and regime evidence.
+
+**When an arrow prints (9:45–15:15 only), check three things:**
+3. **Regime label.** V13.23 already refuses UNDECIDED signals. Your extra
+   filter: the arrows with proven ten-year edge are TREND and ORB with the
+   trend (both in up and down regimes). ORB calls on TREND-UP days were the
+   single best cell (PF 2.0). Fades (LVL/GAPFADE) and compression breakouts
+   never proved out — take them smaller or not at all.
+4. **Score.** 70 is the bar. Do NOT size up or get excited on 85+ prints —
+   85+ scored at or below breakeven in every run. 70–84 is where the edge is.
+5. **EM used.** Past 85% of the expected move, chasing is already blocked for
+   room credit; respect the same idea with your own fills.
+
+**Entry**
+6. Enter on the arrow bar's close (the signal already waited for a completed
+   candidate bar plus follow-through — do not anticipate it, do not wait for
+   "one more bar of confirmation" either).
+7. Instrument: SPXW debit vertical, 10–15 points wide, in the signal
+   direction. Work the midpoint; crossing the spread both ways costs more
+   than the system's entire edge. A bad fill is a reason to skip.
+8. Size so the full debit is the planned loss (it is the 1R).
+
+**Managing the trade — simpler than before**
+9. **Hold the FULL position to the plotted green target line. No scaling.**
+   Taking half at 1R and trailing cut profitability 1.75x in the backtest.
+10. **The red stop line is a TOUCH level.** SPX trades at it → you're out.
+    Don't wait for a 3-min close through it.
+11. **60-minute time stop (orange dot): only if the trade never reached +1R.**
+    If it's been an hour and it hasn't paid, theta is winning — take it off
+    at whatever it's worth. A trade that touched +1R is exempt: it rides to
+    target or stop.
+12. **15:30: flat. Everything. Always.** Trades still open at 15:30 were net
+    losers in every configuration tested.
+
+**What the numbers say to expect** (fixed-exit config, 10 years): ~45% of
+signals win — the system pays on winner size, not hit rate, so a losing
+streak is normal, not broken. Expectancy before costs ≈ +0.12R per signal at
+~1.9 signals/day. Execution quality (fills, spread width) decides whether
+that survives costs — which is why rules 7 and the no-trade days matter more
+than any entry tweak.
+
+**Removed in V13.23 — do not take these even if you "see" them:** MOMO put
+signals (momentum shorts into downtrends lost in both backtest halves), any
+signal while the regime label reads UNDECIDED.
+
+---
+
 ## 1. What changed from V12.1 and why
 
 | Problem in V12.1 | V13 fix |
