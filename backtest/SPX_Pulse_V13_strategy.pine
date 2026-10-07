@@ -32,6 +32,15 @@
 //
 // WALK-FORWARD: set "Test window" = In-sample, tune inputs, then flip to
 // Out-of-sample WITHOUT touching anything else and read the report.
+//
+// RESEARCH TOGGLES (added after the 2026-10-06 ten-year run, see
+// backtest/REPORT-2026-10-06.md): "Stop mode: Touch" replaces the study's
+// close-through stop with a real stop order; "Allow entries in UNDECIDED
+// regime" off skips the PF-0.93 UNDECIDED cohort; "With-trend continuation
+// only" restricts to TREND/ORB/MOMO/FLAG aligned with a confirmed trend
+// regime. Defaults preserve study behavior.
+// NOTE: Properties -> Default order size must be 2 for the scale-half to
+// leave a runner; at size 1 the +1R scale closes the whole position.
 strategy("SPX Pulse V13 Backtest", shorttitle = "PulseV13-BT", overlay = true,
      process_orders_on_close = true, calc_on_every_tick = false,
      default_qty_type = strategy.fixed, default_qty_value = 2, pyramiding = 0,
@@ -59,6 +68,12 @@ testWindow   = input.string("All", "Test window", options = ["All", "In-sample",
 splitDate    = input.time(timestamp("2025-12-01T00:00:00-05:00"), "In/out-of-sample split date", group = grpBT)
 exitEngine   = input.string("Scale+Trail (V13)", "Exit engine", options = ["Scale+Trail (V13)", "Fixed target only"], group = grpBT,
      tooltip = "A/B for handoff question 6: V13 scale-half/trail vs plain stop-and-target")
+stopMode     = input.string("Close through (V13)", "Stop mode", options = ["Close through (V13)", "Touch (intrabar)"], group = grpBT,
+     tooltip = "The .ts stops on CLOSE through the level, which let 16% of trades in the 2016-2026 run lose >1.2x the avg win. Touch mode places a real stop order at the level instead (pre-1R; the post-1R runner still trails on close).")
+allowUndecided = input.bool(true, "Allow entries in UNDECIDED regime", group = grpBT,
+     tooltip = "2016-2026 run: UNDECIDED-regime trades were n=566, PF 0.93. Untick to skip them entirely instead of relying on the +5 score bump.")
+withTrendOnly  = input.bool(false, "With-trend continuation only", group = grpBT,
+     tooltip = "Only TREND/ORB/MOMO/FLAG entries aligned with a confirmed trend regime (calls in TREND UP, puts in TREND DOWN). Drops fades, breakouts, range- and counter-regime trades — the cells that bled in the 2016-2026 run.")
 useLunchHaircut = input.bool(true, "12:00-13:00 score x0.85", group = grpBT)
 undecidedBump   = input.int(5, "Score bump when regime UNDECIDED", group = grpBT)
 emNoRoomCut     = input.float(0.85, "No room credit past this EM used", step = 0.05, group = grpBT)
@@ -399,6 +414,11 @@ callTag = orbCallSetup[1] ? "ORB" : flagCallSetup[1] ? "FLAG" : reversalCall[1] 
 putTag  = orbPutSetup[1] ? "ORB" : flagPutSetup[1] ? "FLAG" : reversalPut[1] ? "LVL" : gapFadePut[1] ? "GAPFADE" : momoPut[1] and not trendPut[1] ? "MOMO" : breakoutPut[1] and not trendPut[1] ? "BRKOUT" : "TREND"
 regTag = regime == 1 ? "TU" : regime == 2 ? "TD" : regime == 3 ? "RG" : "UN"
 
+// Entry filters (backtest research toggles; both default to study behavior)
+trendTags(tag) => tag == "TREND" or tag == "ORB" or tag == "MOMO" or tag == "FLAG"
+callEntryOK = (allowUndecided or regime != 0) and (not withTrendOnly or (regime == 1 and trendTags(callTag)))
+putEntryOK  = (allowUndecided or regime != 0) and (not withTrendOnly or (regime == 2 and trendTags(putTag)))
+
 // ---------------- Trade management (orders) ---------------------------------
 var float heldStop = na
 var float heldTarget = na
@@ -410,7 +430,7 @@ inLong  = strategy.position_size > 0
 inShort = strategy.position_size < 0
 
 // Entries (and study-faithful reversal on opposite signal)
-if tradeCall and inWindow
+if tradeCall and inWindow and callEntryOK
     if inLong and showSkipped
         label.new(bar_index, low, "skip C", style = label.style_triangleup, size = size.tiny, color = color.new(color.aqua, 70))
     if not inLong
@@ -421,7 +441,7 @@ if tradeCall and inWindow
         heldRisk := close - callStopF
         hit1R := false
         entryBar := bar_index
-if tradePut and inWindow
+if tradePut and inWindow and putEntryOK
     if inShort and showSkipped
         label.new(bar_index, high, "skip P", style = label.style_triangledown, size = size.tiny, color = color.new(color.fuchsia, 70))
     if not inShort
@@ -443,34 +463,41 @@ if strategy.position_size != 0 and bar_index > entryBar and not hit1R
     if strategy.position_size < 0 and low <= heldEntry - heldRisk
         hit1R := true
 
+// Touch mode places a real stop order at heldStop. In scale mode it protects
+// the whole position until +1R banks (then the runner trails on close, floor
+// breakeven, so the hard stop is dropped); in fixed mode it stays on for the
+// life of the trade. Close-through mode keeps the study's close-based stop.
+touchStops = stopMode == "Touch (intrabar)"
 if strategy.position_size != 0 and bar_index > entryBar
     if inLong
+        float stopOrdL = touchStops and (not hit1R or not useScaleTrail) ? heldStop : na
         if useScaleTrail
-            strategy.exit("tp1", from_entry = "C", qty_percent = 50, limit = heldEntry + heldRisk, comment = "1R SCALE")
-        strategy.exit("tgt", from_entry = "C", limit = heldTarget, comment = "TARGET")
+            strategy.exit("tp1", from_entry = "C", qty_percent = 50, limit = heldEntry + heldRisk, stop = stopOrdL, comment_profit = "1R SCALE", comment_loss = "STOP")
+        strategy.exit("tgt", from_entry = "C", limit = heldTarget, stop = stopOrdL, comment_profit = "TARGET", comment_loss = "STOP")
         trailLine = math.max(heldEntry, ema21v - 0.25 * tolerance)
         if exitWindow
             strategy.close("C", comment = "1530 EXIT")
         else if useScaleTrail and hit1R and close < trailLine
             strategy.close("C", comment = "TRAIL")
-        else if not hit1R and close < heldStop
+        else if not touchStops and not hit1R and close < heldStop
             strategy.close("C", comment = "STOP")
-        else if hit1R and not useScaleTrail and close < heldStop
+        else if not touchStops and hit1R and not useScaleTrail and close < heldStop
             strategy.close("C", comment = "STOP")
         else if not hit1R and barsInTrade >= timeStopBars
             strategy.close("C", comment = "TIMESTOP")
     if inShort
+        float stopOrdS = touchStops and (not hit1R or not useScaleTrail) ? heldStop : na
         if useScaleTrail
-            strategy.exit("tp1", from_entry = "P", qty_percent = 50, limit = heldEntry - heldRisk, comment = "1R SCALE")
-        strategy.exit("tgt", from_entry = "P", limit = heldTarget, comment = "TARGET")
+            strategy.exit("tp1", from_entry = "P", qty_percent = 50, limit = heldEntry - heldRisk, stop = stopOrdS, comment_profit = "1R SCALE", comment_loss = "STOP")
+        strategy.exit("tgt", from_entry = "P", limit = heldTarget, stop = stopOrdS, comment_profit = "TARGET", comment_loss = "STOP")
         trailLineS = math.min(heldEntry, ema21v + 0.25 * tolerance)
         if exitWindow
             strategy.close("P", comment = "1530 EXIT")
         else if useScaleTrail and hit1R and close > trailLineS
             strategy.close("P", comment = "TRAIL")
-        else if not hit1R and close > heldStop
+        else if not touchStops and not hit1R and close > heldStop
             strategy.close("P", comment = "STOP")
-        else if hit1R and not useScaleTrail and close > heldStop
+        else if not touchStops and hit1R and not useScaleTrail and close > heldStop
             strategy.close("P", comment = "STOP")
         else if not hit1R and barsInTrade >= timeStopBars
             strategy.close("P", comment = "TIMESTOP")
