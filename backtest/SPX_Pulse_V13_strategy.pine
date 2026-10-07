@@ -68,6 +68,8 @@ testWindow   = input.string("All", "Test window", options = ["All", "In-sample",
 splitDate    = input.time(timestamp("2025-12-01T00:00:00-05:00"), "In/out-of-sample split date", group = grpBT)
 exitEngine   = input.string("Scale+Trail (V13)", "Exit engine", options = ["Scale+Trail (V13)", "Fixed target only"], group = grpBT,
      tooltip = "A/B for handoff question 6: V13 scale-half/trail vs plain stop-and-target")
+targetMode   = input.string("Structure/EM (V13)", "Target mode", options = ["Structure/EM (V13)", "Fib 1.618R", "Fib 2.618R"], group = grpBT,
+     tooltip = "V13 targets the nearest opposing level capped at +-1 EM. The Fib modes instead place the target at 1.618x or 2.618x the risk distance beyond entry - a test of whether farther mechanical targets capture more of the trend-day tail (the 2016-2026 run showed held-past-target trades kept paying). The R:R gate still uses the V13 structure target, so the signal set is IDENTICAL across modes - only the exit changes.")
 stopMode     = input.string("Close through (V13)", "Stop mode", options = ["Close through (V13)", "Touch (intrabar)"], group = grpBT,
      tooltip = "The .ts stops on CLOSE through the level, which let 16% of trades in the 2016-2026 run lose >1.2x the avg win. Touch mode places a real stop order at the level instead (pre-1R; the post-1R runner still trails on close).")
 allowUndecided = input.bool(true, "Allow entries in UNDECIDED regime", group = grpBT,
@@ -436,9 +438,9 @@ if tradeCall and inWindow and callEntryOK
     if not inLong
         strategy.entry("C", strategy.long, comment = "C " + callTag + " " + regTag + " s" + str.tostring(math.round(nz(callScore[1]))) + " r" + str.tostring(callRR[1], "#.#"))
         heldStop := callStopF
-        heldTarget := callTargetCalc
         heldEntry := close
         heldRisk := close - callStopF
+        heldTarget := targetMode == "Fib 1.618R" ? close + 1.618 * heldRisk : targetMode == "Fib 2.618R" ? close + 2.618 * heldRisk : callTargetCalc
         hit1R := false
         entryBar := bar_index
 if tradePut and inWindow and putEntryOK
@@ -447,9 +449,9 @@ if tradePut and inWindow and putEntryOK
     if not inShort
         strategy.entry("P", strategy.short, comment = "P " + putTag + " " + regTag + " s" + str.tostring(math.round(nz(putScore[1]))) + " r" + str.tostring(putRR[1], "#.#"))
         heldStop := putStopF
-        heldTarget := putTargetCalc
         heldEntry := close
         heldRisk := putStopF - close
+        heldTarget := targetMode == "Fib 1.618R" ? close - 1.618 * heldRisk : targetMode == "Fib 2.618R" ? close - 2.618 * heldRisk : putTargetCalc
         hit1R := false
         entryBar := bar_index
 
