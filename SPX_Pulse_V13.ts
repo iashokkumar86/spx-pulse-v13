@@ -1,7 +1,25 @@
-# SPX Pulse V13.22 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.23 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
+#
+# V13.23 - changes justified by the 2016-2026 TradingView deep backtest
+# (backtest/REPORT-2026-10-06.md; four 10-year runs, walk-forward validated):
+#   a. Exit engine: the 1R scale-half + 21-EMA trail REDUCED expectancy 1.75x
+#      vs a plain structure stop and target (PF 1.17 vs 1.25, OOS 1.08 vs
+#      1.13). The trail/scale plots and bubbles are removed; manage the full
+#      position to the plotted stop and target. Time stop stays (net positive
+#      in every run) and still applies only before +1R has been touched.
+#   b. Stops are TOUCH levels now, not close-through: close-based stops let
+#      16% of trades lose >1.2x the average win in the backtest.
+#   c. UNDECIDED-regime signals are suppressed entirely (n=566, PF 0.93 over
+#      ten years). The old +5 score bump was not enough.
+#   d. MOMO put signals removed: MOMO/TREND-DOWN was the one cell negative in
+#      BOTH walk-forward halves (PF 0.85 in-sample, 0.57 out-of-sample) -
+#      momentum shorts into downtrends get squeezed. MOMO calls stay.
+#   e. Score bands (not enforced, just guidance): 70-84 prints carried the
+#      edge; 85+ prints were at or below breakeven in every run - do not give
+#      a very high score extra respect or size.
 #
 # New in V13 vs V12.1 Lite:
 #   1. Gap classifier vs prior day close (micro / medium / large) with
@@ -402,8 +420,10 @@ def momoPut = orComplete and close < sessionLow[1] and close < open and
 
 def callCandidate = trendCall or reversalCall or breakoutCall or
                     orbCallSetup or flagCallSetup or gapFadeCall or momoCall;
+# V13.23(d): momoPut removed - MOMO shorts were negative in both walk-forward
+# halves of the 2016-2026 backtest. The definition stays above for reference.
 def putCandidate = trendPut or reversalPut or breakoutPut or
-                   orbPutSetup or flagPutSetup or gapFadePut or momoPut;
+                   orbPutSetup or flagPutSetup or gapFadePut;
 
 # ================= Regime-weighted scoring (0-100) =================
 # Buckets: setup quality (max 30, regime-weighted) + trend alignment (max 20,
@@ -429,8 +449,7 @@ def callSetupScore =
                 Max(if flagCallSetup then wTrendSetup else 0,
                     if reversalCall or gapFadeCall then wFadeSetup else 0)));
 def putSetupScore =
-    Min(30, Max(Max(Max(if trendPut or breakoutPut then wTrendSetup else 0,
-                        if momoPut then Max(0, wTrendSetup - 4) else 0),
+    Min(30, Max(Max(if trendPut or breakoutPut then wTrendSetup else 0,
                     if orbPutSetup then Min(30, wTrendSetup + orbBonus) else 0),
                 Max(if flagPutSetup then wTrendSetup else 0,
                     if reversalPut or gapFadePut then wFadeSetup else 0)));
@@ -507,8 +526,10 @@ AddLabel(anyNaN,
     (if IsNaN(callVolScore + putVolScore) then " VIX" else ""),
     Color.RED);
 
-# Undecided regime demands a higher bar.
-def effMinScore = if regime == 0 then minimumScore + 5 else minimumScore;
+# V13.23(c): UNDECIDED no longer trades at all (the +5 bump was not enough:
+# PF 0.93 over n=566 in the 2016-2026 backtest). effMinScore kept for labels.
+def effMinScore = minimumScore;
+def regimeOK = regime != 0;
 
 # Structure stop: beyond the nearest level / recent swing, capped at 2.2x ATR.
 def callStopCalc = Min(Lowest(low, 3), nearestSupport) - 0.25 * tolerance;
@@ -538,10 +559,10 @@ def callRROK = minRewardRisk == 0 or nz(callRR) >= minRewardRisk;
 def putRROK = minRewardRisk == 0 or nz(putRR) >= minRewardRisk;
 
 # ================= Confirmation (completed bar [1] + follow-through) =======
-def confirmedCall = !lockoutCondition and nz(callCandidate[1]) == 1 and
+def confirmedCall = !lockoutCondition and regimeOK and nz(callCandidate[1]) == 1 and
                     nz(callRROK[1]) == 1 and
                     nz(callScore[1]) >= effMinScore and close > close[1];
-def confirmedPut = !lockoutCondition and nz(putCandidate[1]) == 1 and
+def confirmedPut = !lockoutCondition and regimeOK and nz(putCandidate[1]) == 1 and
                    nz(putRROK[1]) == 1 and
                    nz(putScore[1]) >= effMinScore and close < close[1];
 
@@ -588,9 +609,11 @@ def hit1R = if TradeCall or TradePut then 0
 def barsInTrade = if TradeCall or TradePut then 0
                   else if activeSide != 0 then barsInTrade[1] + 1
                   else 0;
+# V13.23(b): stop is a TOUCH level now. Close-through stops let 16% of trades
+# lose more than 1.2x the average win in the 2016-2026 backtest.
 def stopHit = activeSide != 0 and
-              ((activeSide == 1 and close < heldStop) or
-               (activeSide == -1 and close > heldStop));
+              ((activeSide == 1 and low <= heldStop) or
+               (activeSide == -1 and high >= heldStop));
 def targetHit = activeSide != 0 and
                 ((activeSide == 1 and high >= heldTarget) or
                  (activeSide == -1 and low <= heldTarget));
@@ -612,19 +635,10 @@ plot TimeStopMark = if showTradeManagement and timeStop then close else Double.N
 TimeStopMark.SetPaintingStrategy(PaintingStrategy.POINTS);
 TimeStopMark.SetDefaultColor(Color.ORANGE);
 TimeStopMark.SetLineWeight(5);
-# After 1R: scale half, move stop to entry, trail the rest behind the 21 EMA.
-plot RunnerTrail = if showTradeManagement and hit1R and activeSide == 1 and !stopHit
-                   then Max(heldEntry, ema21 - 0.25 * tolerance)
-                   else if showTradeManagement and hit1R and activeSide == -1 and !stopHit
-                   then Min(heldEntry, ema21 + 0.25 * tolerance)
-                   else Double.NaN;
-RunnerTrail.SetDefaultColor(Color.LIGHT_ORANGE);
-RunnerTrail.SetStyle(Curve.FIRM);
-RunnerTrail.SetLineWeight(2);
-AddChartBubble(showTradeManagement and hit1R and !hit1R[1] and activeSide == 1,
-               low, "1R - SCALE HALF, TRAIL", Color.GREEN, no);
-AddChartBubble(showTradeManagement and hit1R and !hit1R[1] and activeSide == -1,
-               high, "1R - SCALE HALF, TRAIL", Color.GREEN, yes);
+# V13.23(a): scale-half + 21-EMA trail removed. The 2016-2026 backtest showed
+# it cut expectancy 1.75x vs holding full size to the structure target (PF
+# 1.17 vs 1.25). Manage the whole position to the plotted stop and target.
+# hit1R is still tracked: it only exempts the trade from the time stop.
 
 # ================= Reference plots =================
 plot Ribbon8 = if showRibbon then ema8 else Double.NaN;
@@ -701,11 +715,10 @@ AddChartBubble(TradePut, high,
     "V13 PUT " + putScore[1] +
     (if orbPutSetup[1] then " ORB" else if flagPutSetup[1] then " FLAG"
      else if reversalPut[1] then " LVL" else if gapFadePut[1] then " GAPFADE"
-     else if momoPut[1] and !trendPut[1] then " MOMO"
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.22", Color.GRAY);
+AddLabel(yes, "V13.23", Color.GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
