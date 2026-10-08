@@ -414,7 +414,10 @@ tradePut  = rawPut and sincePut == 0
 // Tag the signal with its setup (evaluated on the candidate bar, [1])
 callTag = orbCallSetup[1] ? "ORB" : flagCallSetup[1] ? "FLAG" : reversalCall[1] ? "LVL" : gapFadeCall[1] ? "GAPFADE" : momoCall[1] and not trendCall[1] ? "MOMO" : breakoutCall[1] and not trendCall[1] ? "BRKOUT" : "TREND"
 putTag  = orbPutSetup[1] ? "ORB" : flagPutSetup[1] ? "FLAG" : reversalPut[1] ? "LVL" : gapFadePut[1] ? "GAPFADE" : momoPut[1] and not trendPut[1] ? "MOMO" : breakoutPut[1] and not trendPut[1] ? "BRKOUT" : "TREND"
-regTag = regime == 1 ? "TU" : regime == 2 ? "TD" : regime == 3 ? "RG" : "UN"
+// Regime tag carries the raw vote counts (trendUp-trendDown-range) so exports
+// can test sub-groups, e.g. whether UNDECIDED with a 2-0 directional lean pays.
+regTag = (regime == 1 ? "TU" : regime == 2 ? "TD" : regime == 3 ? "RG" : "UN") +
+     " v" + str.tostring(trendUpEvidence) + "-" + str.tostring(trendDnEvidence) + "-" + str.tostring(rangeEvidence)
 
 // Entry filters (backtest research toggles; both default to study behavior)
 trendTags(tag) => tag == "TREND" or tag == "ORB" or tag == "MOMO" or tag == "FLAG"
