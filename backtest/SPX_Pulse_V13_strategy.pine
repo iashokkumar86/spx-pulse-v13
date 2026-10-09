@@ -72,8 +72,8 @@ targetMode   = input.string("Structure/EM (V13)", "Target mode", options = ["Str
      tooltip = "V13 targets the nearest opposing level capped at +-1 EM. The Fib modes instead place the target at 1.618x or 2.618x the risk distance beyond entry - a test of whether farther mechanical targets capture more of the trend-day tail (the 2016-2026 run showed held-past-target trades kept paying). The R:R gate still uses the V13 structure target, so the signal set is IDENTICAL across modes - only the exit changes.")
 stopMode     = input.string("Close through (V13)", "Stop mode", options = ["Close through (V13)", "Touch (intrabar)"], group = grpBT,
      tooltip = "The .ts stops on CLOSE through the level, which let 16% of trades in the 2016-2026 run lose >1.2x the avg win. Touch mode places a real stop order at the level instead (pre-1R; the post-1R runner still trails on close).")
-allowUndecided = input.bool(true, "Allow entries in UNDECIDED regime", group = grpBT,
-     tooltip = "2016-2026 run: UNDECIDED-regime trades were n=566, PF 0.93. Untick to skip them entirely instead of relying on the +5 score bump.")
+undecidedPolicy = input.string("Leaning 2-0 only (V13.24)", "UNDECIDED regime policy", options = ["Allow all (V13.22)", "Block all (V13.23)", "Leaning 2-0 only (V13.24)"], group = grpBT,
+     tooltip = "Vote-tagged 2016-2026 run: UNDECIDED trades with >=2 regime votes in the trade's direction and 0 against ran PF 1.18 (positive both walk-forward halves); against-the-lean ran PF 0.21. V13.24 admits only the 2-0 lean.")
 withTrendOnly  = input.bool(false, "With-trend continuation only", group = grpBT,
      tooltip = "Only TREND/ORB/MOMO/FLAG entries aligned with a confirmed trend regime (calls in TREND UP, puts in TREND DOWN). Drops fades, breakouts, range- and counter-regime trades — the cells that bled in the 2016-2026 run.")
 useLunchHaircut = input.bool(true, "12:00-13:00 score x0.85", group = grpBT)
@@ -421,8 +421,10 @@ regTag = (regime == 1 ? "TU" : regime == 2 ? "TD" : regime == 3 ? "RG" : "UN") +
 
 // Entry filters (backtest research toggles; both default to study behavior)
 trendTags(tag) => tag == "TREND" or tag == "ORB" or tag == "MOMO" or tag == "FLAG"
-callEntryOK = (allowUndecided or regime != 0) and (not withTrendOnly or (regime == 1 and trendTags(callTag)))
-putEntryOK  = (allowUndecided or regime != 0) and (not withTrendOnly or (regime == 2 and trendTags(putTag)))
+callUnOK = regime != 0 or undecidedPolicy == "Allow all (V13.22)" or (undecidedPolicy == "Leaning 2-0 only (V13.24)" and trendUpEvidence >= 2 and trendDnEvidence == 0)
+putUnOK  = regime != 0 or undecidedPolicy == "Allow all (V13.22)" or (undecidedPolicy == "Leaning 2-0 only (V13.24)" and trendDnEvidence >= 2 and trendUpEvidence == 0)
+callEntryOK = callUnOK and (not withTrendOnly or (regime == 1 and trendTags(callTag)))
+putEntryOK  = putUnOK and (not withTrendOnly or (regime == 2 and trendTags(putTag)))
 
 // ---------------- Trade management (orders) ---------------------------------
 var float heldStop = na

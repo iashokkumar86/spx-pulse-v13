@@ -1,4 +1,4 @@
-# SPX Pulse V13.23 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.24 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -526,10 +526,18 @@ AddLabel(anyNaN,
     (if IsNaN(callVolScore + putVolScore) then " VIX" else ""),
     Color.RED);
 
-# V13.23(c): UNDECIDED no longer trades at all (the +5 bump was not enough:
-# PF 0.93 over n=566 in the 2016-2026 backtest). effMinScore kept for labels.
+# V13.24: UNDECIDED trades only with a clean directional lean - at least two
+# regime votes WITH the trade's direction and zero against. Vote-tagged
+# backtest (2016-2026): that sub-group ran PF 1.18 and was positive in both
+# walk-forward halves (1.12 / 1.47); trades against the lean ran PF 0.21.
+# (V13.23 had blocked all UNDECIDED; the old +5 bump remains retired.)
 def effMinScore = minimumScore;
-def regimeOK = regime != 0;
+def callRegimeOK = if regime != 0 then 1
+                   else if trendUpEvidence >= 2 and trendDnEvidence == 0 then 1
+                   else 0;
+def putRegimeOK = if regime != 0 then 1
+                  else if trendDnEvidence >= 2 and trendUpEvidence == 0 then 1
+                  else 0;
 
 # Structure stop: beyond the nearest level / recent swing, capped at 2.2x ATR.
 def callStopCalc = Min(Lowest(low, 3), nearestSupport) - 0.25 * tolerance;
@@ -559,10 +567,10 @@ def callRROK = minRewardRisk == 0 or nz(callRR) >= minRewardRisk;
 def putRROK = minRewardRisk == 0 or nz(putRR) >= minRewardRisk;
 
 # ================= Confirmation (completed bar [1] + follow-through) =======
-def confirmedCall = !lockoutCondition and regimeOK and nz(callCandidate[1]) == 1 and
+def confirmedCall = !lockoutCondition and callRegimeOK and nz(callCandidate[1]) == 1 and
                     nz(callRROK[1]) == 1 and
                     nz(callScore[1]) >= effMinScore and close > close[1];
-def confirmedPut = !lockoutCondition and regimeOK and nz(putCandidate[1]) == 1 and
+def confirmedPut = !lockoutCondition and putRegimeOK and nz(putCandidate[1]) == 1 and
                    nz(putRROK[1]) == 1 and
                    nz(putScore[1]) >= effMinScore and close < close[1];
 
@@ -718,7 +726,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.23", Color.GRAY);
+AddLabel(yes, "V13.24", Color.GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;

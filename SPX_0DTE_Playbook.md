@@ -61,8 +61,13 @@ that survives costs — which is why rules 7 and the no-trade days matter more
 than any entry tweak.
 
 **Removed in V13.23 — do not take these even if you "see" them:** MOMO put
-signals (momentum shorts into downtrends lost in both backtest halves), any
-signal while the regime label reads UNDECIDED.
+signals (momentum shorts into downtrends lost in both backtest halves).
+
+**Refined in V13.24:** UNDECIDED-regime signals are allowed again ONLY when
+the regime votes lean at least 2-0 in the trade's direction (the study checks
+this; the vote-tagged backtest showed that sub-group PF 1.18, positive in
+both walk-forward halves, while against-the-lean ran PF 0.21). A dead-air
+0-0 UNDECIDED day still produces no signals — that silence is correct.
 
 ---
 
