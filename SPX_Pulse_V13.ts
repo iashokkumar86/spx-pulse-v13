@@ -1,4 +1,4 @@
-# SPX Pulse V13.24 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.25 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -726,7 +726,7 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.24", Color.GRAY);
+AddLabel(yes, "V13.25", Color.GRAY);
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
@@ -765,7 +765,7 @@ AddLabel(showContextLabels,
 AddLabel(showContextLabels,
     "S " + Round(nearestSupport, 0) + " / R " + Round(nearestResistance, 0),
     Color.LIGHT_GRAY);
-AddLabel(showContextLabels and exitWindow, "EXIT BY 15:30 — GAMMA HOUR", Color.RED);
+AddLabel(showContextLabels and exitWindow, "GAMMA HOUR — hard exit removed in V13.25 (untested past 15:30)", Color.RED);
 AddLabel(showContextLabels and lunch, "LUNCH — REDUCED SIZE/SCORE", Color.DARK_ORANGE);
 AddLabel(showLabels,
     if lockoutCondition then "V13 LOCKED OUT"
@@ -834,6 +834,7 @@ Alert(enableAlerts and TradePut,
 Alert(enableAlerts and timeStop,
       "SPX PULSE V13 TIME STOP - 60 min in trade, theta is winning",
       Alert.BAR, Sound.Ring);
-Alert(enableAlerts and exitWindow and !exitWindow[1],
-      "SPX PULSE V13 - 15:30 hard exit window",
-      Alert.BAR, Sound.Ring);
+# V13.25: 15:30 hard-exit alert removed at the user's direction. NOT backtest
+# validated - the 2016-2026 runs only measured holds UP TO 15:30 (those were
+# net positive); behavior from 15:30 to the close is untested. The context
+# label below still marks the gamma hour for awareness.

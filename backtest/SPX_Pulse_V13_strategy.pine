@@ -76,6 +76,8 @@ undecidedPolicy = input.string("Leaning 2-0 only (V13.24)", "UNDECIDED regime po
      tooltip = "Vote-tagged 2016-2026 run: UNDECIDED trades with >=2 regime votes in the trade's direction and 0 against ran PF 1.18 (positive both walk-forward halves); against-the-lean ran PF 0.21. V13.24 admits only the 2-0 lean.")
 withTrendOnly  = input.bool(false, "With-trend continuation only", group = grpBT,
      tooltip = "Only TREND/ORB/MOMO/FLAG entries aligned with a confirmed trend regime (calls in TREND UP, puts in TREND DOWN). Drops fades, breakouts, range- and counter-regime trades — the cells that bled in the 2016-2026 run.")
+hardExitTime = input.string("15:30 (V13)", "Hard exit time", options = ["15:30 (V13)", "15:57 (hold to close)"], group = grpBT,
+     tooltip = "15:30 is the tested rule (those exits were net POSITIVE under fixed targets). 15:57 holds runners through the gamma hour - added to test the V13.25 removal of the 15:30 exit before trusting it live.")
 useLunchHaircut = input.bool(true, "12:00-13:00 score x0.85", group = grpBT)
 undecidedBump   = input.int(5, "Score bump when regime UNDECIDED", group = grpBT)
 emNoRoomCut     = input.float(0.85, "No room credit past this EM used", step = 0.05, group = grpBT)
@@ -101,7 +103,7 @@ before1000 = minsNY < 600
 before1200 = minsNY < 720
 eligibleTime = minsNY >= 585 and minsNY < 915        // 09:45-15:15
 lunch        = minsNY >= 720 and minsNY < 780        // 12:00-13:00
-exitWindow   = minsNY >= 930                          // 15:30
+exitWindow   = minsNY >= (hardExitTime == "15:57 (hold to close)" ? 957 : 930)
 
 // ---------------- Core series --------------------------------------------
 phaseATR   = ta.rma(ta.tr, 14)
