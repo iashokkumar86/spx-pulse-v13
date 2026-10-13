@@ -726,59 +726,51 @@ AddChartBubble(TradePut, high,
      else " TREND") + " " + Round(putRR[1], 1) + "R",
     Color.MAGENTA, yes);
 
-AddLabel(yes, "V13.25", Color.GRAY);
+# Warnings only appear when something is actually wrong.
 AddLabel(GetSymbol() != "SPX", "CHART IS " + GetSymbol() + " - GEX/level inputs are SPX-scale", Color.DARK_ORANGE);
 # Extended-hours bars corrupt every session window, EMA and rolling range.
 def ethBar = SecondsFromTime(0930) < 0 or SecondsFromTime(1615) >= 0;
 def seenETH = CompoundValue(1, seenETH[1] or (ethBar and !IsNaN(close)), 0);
 AddLabel(seenETH, "EXTENDED HOURS ON - disable ETH on this chart", Color.RED);
-# Live health of every cross-symbol input the setups depend on. If any
-# reads N/A the candidate engine is running blind - that is the bug.
 AddLabel(showDiagnosticMarkers,
     "DATA: SPX-TWAP mode (SPY removed - delayed feed)" +
     (if aboveVWAPProxy then " >VWAP" else " <VWAP") +
     " | VIX " + (if IsNaN(vixClose) then "N/A!" else "" + Round(vixClose, 2)),
     if IsNaN(vixClose) then Color.RED else Color.DARK_GRAY);
+
+# V13.25 label slimming: the whole day context lives in ONE chip -
+# regime / gap / EM used - colored by regime. Everything the chart already
+# draws (OR, S/R, levels) no longer repeats as a label; OR/S/R numbers moved
+# to diagnostics. The static GEX / SPXW reminders are retired (playbook).
 AddLabel(showContextLabels,
-    if regime == 1 then "REGIME: TREND UP"
-    else if regime == 2 then "REGIME: TREND DOWN"
-    else if regime == 3 then "REGIME: RANGE"
-    else "REGIME: UNDECIDED",
+    (if regime == 1 then "TREND UP"
+     else if regime == 2 then "TREND DOWN"
+     else if regime == 3 then "RANGE"
+     else "UNDECIDED") +
+    " · gap " + Round(gapPct, 2) + "%" +
+    (if gapLarge then " go" else if gapFadeAlive then " fade" else "") +
+    " · EM " + Round(100 * emUsed, 0) + "%",
     if regime == 1 then Color.GREEN
     else if regime == 2 then Color.RED
     else if regime == 3 then Color.ORANGE
     else Color.GRAY);
-AddLabel(showContextLabels,
-    "GAP " + (if gapUp then "UP " else if gapDown then "DOWN " else "FLAT ") +
-    Round(gapPct, 2) + "% " +
-    (if gapLarge then "LARGE(go)" else if gapMedium then "MED" else "MICRO(fade)") +
-    " fill " + Round(100 * gapFillProgress, 0) + "%",
-    if gapAndGoUp then Color.GREEN else if gapAndGoDown then Color.RED
-    else if gapFadeAlive then Color.ORANGE else Color.GRAY);
-AddLabel(showContextLabels and orComplete,
+AddLabel(showDiagnosticMarkers and orComplete,
     "OR " + Round(orLow, 0) + "-" + Round(orHigh, 0) +
-    (if brokeUpToday then " BROKE UP" else if brokeDownToday then " BROKE DN" else " INSIDE"),
-    if brokeUpToday then Color.GREEN else if brokeDownToday then Color.RED else Color.GRAY);
-AddLabel(showContextLabels,
-    "EM " + Round(emPts, 0) + "pts · used " + Round(100 * emUsed, 0) + "%",
-    if AbsValue(emUsed) > 0.85 then Color.RED else Color.GRAY);
-AddLabel(showContextLabels,
-    "S " + Round(nearestSupport, 0) + " / R " + Round(nearestResistance, 0),
+    (if brokeUpToday then " BROKE UP" else if brokeDownToday then " BROKE DN" else " INSIDE") +
+    " | S " + Round(nearestSupport, 0) + " / R " + Round(nearestResistance, 0),
     Color.LIGHT_GRAY);
-AddLabel(showContextLabels and exitWindow, "GAMMA HOUR — hard exit removed in V13.25 (untested past 15:30)", Color.RED);
-AddLabel(showContextLabels and lunch, "LUNCH — REDUCED SIZE/SCORE", Color.DARK_ORANGE);
+AddLabel(showContextLabels and exitWindow, "GAMMA HOUR", Color.RED);
+AddLabel(showContextLabels and lunch, "LUNCH", Color.DARK_ORANGE);
 AddLabel(showLabels,
-    if lockoutCondition then "V13 LOCKED OUT"
-    else if TradeCall then "V13 TRADE CALL · " + callScore[1]
-    else if TradePut then "V13 TRADE PUT · " + putScore[1]
-    else "V13 WAIT · CALL " + callScore + " / PUT " + putScore + " · need " + effMinScore,
+    "V13.25 · " +
+    (if lockoutCondition then "LOCKED OUT"
+     else if TradeCall then "TRADE CALL · " + callScore[1]
+     else if TradePut then "TRADE PUT · " + putScore[1]
+     else "WAIT · C " + callScore + " / P " + putScore + " · need " + effMinScore),
     if lockoutCondition then Color.RED
     else if TradeCall then Color.CYAN
     else if TradePut then Color.MAGENTA
     else Color.GRAY);
-AddLabel(showContextLabels and !useManualGEX, "GEX NOT INCLUDED", Color.DARK_GRAY);
-AddLabel(showContextLabels and useManualGEX, "GEX MANUAL", Color.ORANGE);
-AddLabel(showContextLabels, "VERIFY SPXW SPREAD · DELTA · OI · EVENT RISK", Color.YELLOW);
 
 AddChartBubble(showDiagnosticMarkers and IsNaN(close[-1]), close,
     "V13 | regime " + regime + " | C " + callScore + " P " + putScore +
