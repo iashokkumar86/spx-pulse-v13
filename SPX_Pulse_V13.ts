@@ -798,12 +798,20 @@ AddLabel(showDiagnosticMarkers and !adrOK,
 # ~2.3 sessions on a 3-min chart; close[-300] is NaN only within the last
 # 300 bars of the chart (fixed index - thinkorswim needs a constant here).
 def isRecentBar = IsNaN(close[-300]);
+# Bubble shows every gate, not just the score, so a non-converting candidate
+# explains itself: score/need, the printed R:R (x = fails the minRewardRisk
+# gate), rG x = regime gate (incl. the 2-0 lean) blocks this side, and the
+# reminder that the arrow still needs next-bar follow-through.
 AddChartBubble(showDiagnosticMarkers and isRecentBar and callCandidate,
-               low - phaseATR * .3, callScore + "/" + effMinScore,
-               if callScore >= effMinScore then Color.CYAN else Color.DARK_GRAY, no);
+               low - phaseATR * .3,
+               callScore + "/" + effMinScore + " · " + Round(callRR, 1) + "R" +
+               (if !callRROK then "x" else "") + (if !callRegimeOK then " rGx" else ""),
+               if callScore >= effMinScore and callRROK and callRegimeOK then Color.CYAN else Color.DARK_GRAY, no);
 AddChartBubble(showDiagnosticMarkers and isRecentBar and putCandidate,
-               high + phaseATR * .3, putScore + "/" + effMinScore,
-               if putScore >= effMinScore then Color.MAGENTA else Color.DARK_GRAY, yes);
+               high + phaseATR * .3,
+               putScore + "/" + effMinScore + " · " + Round(putRR, 1) + "R" +
+               (if !putRROK then "x" else "") + (if !putRegimeOK then " rGx" else ""),
+               if putScore >= effMinScore and putRROK and putRegimeOK then Color.MAGENTA else Color.DARK_GRAY, yes);
 
 plot RawCallCandidate = if showDiagnosticMarkers and callCandidate then low - phaseATR * .08 else Double.NaN;
 plot RawPutCandidate = if showDiagnosticMarkers and putCandidate then high + phaseATR * .08 else Double.NaN;
