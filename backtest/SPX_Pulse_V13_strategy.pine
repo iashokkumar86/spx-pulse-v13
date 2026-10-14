@@ -87,6 +87,9 @@ wCounterIn      = input.int(8,  "Setup wt: counter in trend regime", group = grp
 wWithTrendRange = input.int(10, "Setup wt: with-trend in range regime", group = grpBT)
 wCounterRange   = input.int(30, "Setup wt: counter in range regime", group = grpBT)
 wUndecided      = input.int(18, "Setup wt: any setup, regime undecided", group = grpBT)
+useOvernightBias = input.bool(false, "Overnight bias votes (research)", group = grpBT,
+     tooltip = "Imports the premarket-context concept: if SPY's premarket (04:00-09:30 ET, extended data) moved at least the threshold % from the prior RTH close AND sits in the directional quarter of its premarket range, the regime gets 2 votes in that direction until 11:00. Gives the regime gate overnight eyes at the open, which RTH-only V13 lacks. OFF reproduces live V13.25 behavior.")
+onBiasThresh     = input.float(0.30, "Overnight bias threshold (%)", step = 0.05, group = grpBT)
 showSkipped     = input.bool(false, "Mark skipped signals", group = grpBT)
 showLevels      = input.bool(true,  "Plot OR / PDH / PDL / PDC", group = grpBT)
 
@@ -204,6 +207,45 @@ emLower1 = dayOpen - emPts
 emUsed = emPts > 0 ? (close - dayOpen) / emPts : 0
 emUsed := na(emUsed) ? 0 : emUsed
 
+// ---------------- Overnight bias (premarket SPY, extended hours) ----------
+// Computed inside the extended-hours SPY series: the premarket's % change
+// from the prior RTH close and where the last premarket print sits in the
+// premarket range. Vars only update on premarket/RTH bars that have already
+// closed, so there is no lookahead.
+f_overnight() =>
+    string tz2 = "America/New_York"
+    int m2 = hour(time, tz2) * 60 + minute(time, tz2)
+    bool isPm = m2 >= 240 and m2 < 570
+    bool isRth2 = m2 >= 570 and m2 < 960
+    int dkey = month(time, tz2) * 100 + dayofmonth(time, tz2)
+    var float pmH = na
+    var float pmL = na
+    var float pmC = na
+    var float rthC = na
+    var float prevC = na
+    var int pmDay = na
+    if isPm
+        if na(pmDay) or dkey != pmDay
+            pmDay := dkey
+            prevC := rthC
+            pmH := high
+            pmL := low
+        else
+            pmH := math.max(pmH, high)
+            pmL := math.min(pmL, low)
+        pmC := close
+    if isRth2
+        rthC := close
+    float chg = not na(pmC) and not na(prevC) and prevC > 0 ? 100 * (pmC - prevC) / prevC : 0.0
+    float pos = not na(pmH) and not na(pmL) and pmH > pmL ? (pmC - pmL) / (pmH - pmL) : 0.5
+    [chg, pos, pmDay]
+
+[onChg, onPos, onDay] = request.security(ticker.new("AMEX", "SPY", session.extended), timeframe.period, f_overnight(), ignore_invalid_symbol = true)
+onFresh  = not na(onDay) and onDay == month(time, tzNY) * 100 + dayofmonth(time, tzNY)
+onActive = useOvernightBias and onFresh and minsNY < 660   // bias decays at 11:00
+onVoteUp = onActive and onChg >= onBiasThresh and onPos >= 0.6 ? 2 : 0
+onVoteDn = onActive and onChg <= -onBiasThresh and onPos <= 0.4 ? 2 : 0
+
 // ---------------- Gap classifier ------------------------------------------
 gapPts = dayOpen - pdc
 gapPct = not na(pdc) and pdc > 0 ? 100 * gapPts / pdc : 0
@@ -306,9 +348,9 @@ gexTrendy = useManualGEX and gammaFlip > 0 and close < gammaFlip
 gexRangy  = useManualGEX and gammaFlip > 0 and close > gammaFlip
 
 trendUpEvidence = (gapAndGoUp ? 2 : 0) + (after1030 and fhRangePctADR > 0.45 and close > orHigh ? 2 : 0) +
-     (close > pdh ? 1 : 0) + (bullRegimeTrend ? 1 : 0) + (emUsed > 0.6 ? 1 : 0) + (gexTrendy and close > dayOpen ? 1 : 0)
+     (close > pdh ? 1 : 0) + (bullRegimeTrend ? 1 : 0) + (emUsed > 0.6 ? 1 : 0) + (gexTrendy and close > dayOpen ? 1 : 0) + onVoteUp
 trendDnEvidence = (gapAndGoDown ? 2 : 0) + (after1030 and fhRangePctADR > 0.45 and close < orLow ? 2 : 0) +
-     (close < pdl ? 1 : 0) + (bearRegimeTrend ? 1 : 0) + (emUsed < -0.6 ? 1 : 0) + (gexTrendy and close < dayOpen ? 1 : 0)
+     (close < pdl ? 1 : 0) + (bearRegimeTrend ? 1 : 0) + (emUsed < -0.6 ? 1 : 0) + (gexTrendy and close < dayOpen ? 1 : 0) + onVoteDn
 rangeEvidence = (gapMicro ? 1 : 0) + (after1030 and adr14f > 0 and fhRangePctADR > 0 and fhRangePctADR < 0.35 ? 2 : 0) +
      (insidePriorRange ? 1 : 0) + (gexRangy ? 1 : 0) + (math.abs(emUsed) < 0.35 and after1030 ? 1 : 0)
 
@@ -420,6 +462,7 @@ putTag  = orbPutSetup[1] ? "ORB" : flagPutSetup[1] ? "FLAG" : reversalPut[1] ? "
 // can test sub-groups, e.g. whether UNDECIDED with a 2-0 directional lean pays.
 regTag = (regime == 1 ? "TU" : regime == 2 ? "TD" : regime == 3 ? "RG" : "UN") +
      " v" + str.tostring(trendUpEvidence) + "-" + str.tostring(trendDnEvidence) + "-" + str.tostring(rangeEvidence)
+oTag = onVoteUp > 0 ? " oU" : onVoteDn > 0 ? " oD" : ""   // appended to the comment tail for slicing
 
 // Entry filters (backtest research toggles; both default to study behavior)
 trendTags(tag) => tag == "TREND" or tag == "ORB" or tag == "MOMO" or tag == "FLAG"
@@ -443,7 +486,7 @@ if tradeCall and inWindow and callEntryOK
     if inLong and showSkipped
         label.new(bar_index, low, "skip C", style = label.style_triangleup, size = size.tiny, color = color.new(color.aqua, 70))
     if not inLong
-        strategy.entry("C", strategy.long, comment = "C " + callTag + " " + regTag + " s" + str.tostring(math.round(nz(callScore[1]))) + " r" + str.tostring(callRR[1], "#.#"))
+        strategy.entry("C", strategy.long, comment = "C " + callTag + " " + regTag + " s" + str.tostring(math.round(nz(callScore[1]))) + " r" + str.tostring(callRR[1], "#.#") + oTag)
         heldStop := callStopF
         heldEntry := close
         heldRisk := close - callStopF
@@ -454,7 +497,7 @@ if tradePut and inWindow and putEntryOK
     if inShort and showSkipped
         label.new(bar_index, high, "skip P", style = label.style_triangledown, size = size.tiny, color = color.new(color.fuchsia, 70))
     if not inShort
-        strategy.entry("P", strategy.short, comment = "P " + putTag + " " + regTag + " s" + str.tostring(math.round(nz(putScore[1]))) + " r" + str.tostring(putRR[1], "#.#"))
+        strategy.entry("P", strategy.short, comment = "P " + putTag + " " + regTag + " s" + str.tostring(math.round(nz(putScore[1]))) + " r" + str.tostring(putRR[1], "#.#") + oTag)
         heldStop := putStopF
         heldEntry := close
         heldRisk := putStopF - close
