@@ -1,4 +1,4 @@
-# SPX Pulse V13.25 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.27 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -364,7 +364,10 @@ def regime =
     else 0;
 
 # ================= MODULE 7: Session windows =================
-def eligibleTime = SecondsFromTime(0945) >= 0 and SecondsTillTime(1515) > 0;
+# V13.27: afternoon entry cutoff removed at the user's direction (was 15:15;
+# NOT backtest validated - late entries tested weak and cannot complete the
+# 60-min time stop). Entries now allowed from 9:45 ET until the close.
+def eligibleTime = SecondsFromTime(0945) >= 0 and SecondsTillTime(1600) > 0;
 def lunch = SecondsFromTime(1200) >= 0 and SecondsTillTime(1300) > 0;
 def exitWindow = SecondsFromTime(1530) >= 0;
 def sessionMult = if !eligibleTime then 0
@@ -763,7 +766,7 @@ AddLabel(showDiagnosticMarkers and orComplete,
 AddLabel(showContextLabels and exitWindow, "GAMMA HOUR", Color.RED);
 AddLabel(showContextLabels and lunch, "LUNCH", Color.DARK_ORANGE);
 AddLabel(showLabels,
-    "V13.25 · " +
+    "V13.27 · " +
     (if lockoutCondition then "LOCKED OUT"
      else if TradeCall then "TRADE CALL · " + callScore[1]
      else if TradePut then "TRADE PUT · " + putScore[1]
