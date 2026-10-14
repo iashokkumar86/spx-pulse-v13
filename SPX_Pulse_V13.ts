@@ -1,4 +1,4 @@
-# SPX Pulse V13.26 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
+# SPX Pulse V13.25 - Dynamic Regime-Aware 0DTE Decision Study for thinkorswim
 # RUN ON: SPX, 3-min, 20 days, EXTENDED HOURS OFF.
 # Decision-support study only. It does not place orders.
 # Designed for an SPX 3-minute RTH chart with 10-minute confirmation.
@@ -59,12 +59,6 @@ input overnightHigh = 0.0;      # from /ES globex, manual (SPX has no overnight 
 input overnightLow = 0.0;
 input manualSupport = 0.0;
 input manualResistance = 0.0;
-input overnightBias = {default "none", "up", "down"};
-    # V13.26, manual morning input (feed has no premarket): set from /ES or
-    # SPY premarket - "up"/"down" only when the overnight move is decisive
-    # (>=0.3% from prior close, closing near its extreme). Until 11:00 it
-    # VETOES opposing signals; it never adds trades. Backtest 2010-2026:
-    # trades against a strong overnight lean ran PF 0.91/0.81 (IS/OOS).
 input eventLockout = no;
 input dailyRiskLockout = no;
 input showEMBands = no;         # EM still used in scoring; lines hidden
@@ -538,18 +532,12 @@ AddLabel(anyNaN,
 # walk-forward halves (1.12 / 1.47); trades against the lean ran PF 0.21.
 # (V13.23 had blocked all UNDECIDED; the old +5 bump remains retired.)
 def effMinScore = minimumScore;
-def callRegimeOKraw = if regime != 0 then 1
-                      else if trendUpEvidence >= 2 and trendDnEvidence == 0 then 1
-                      else 0;
-def putRegimeOKraw = if regime != 0 then 1
-                     else if trendDnEvidence >= 2 and trendUpEvidence == 0 then 1
-                     else 0;
-# V13.26: overnight-bias veto, active until 11:00 (manual input, see above).
-def onVetoActive = SecondsTillTime(1100) > 0;
-def callRegimeOK = callRegimeOKraw and
-                   !(onVetoActive and overnightBias == overnightBias."down");
-def putRegimeOK = putRegimeOKraw and
-                  !(onVetoActive and overnightBias == overnightBias."up");
+def callRegimeOK = if regime != 0 then 1
+                   else if trendUpEvidence >= 2 and trendDnEvidence == 0 then 1
+                   else 0;
+def putRegimeOK = if regime != 0 then 1
+                  else if trendDnEvidence >= 2 and trendUpEvidence == 0 then 1
+                  else 0;
 
 # Structure stop: beyond the nearest level / recent swing, capped at 2.2x ATR.
 def callStopCalc = Min(Lowest(low, 3), nearestSupport) - 0.25 * tolerance;
@@ -775,7 +763,7 @@ AddLabel(showDiagnosticMarkers and orComplete,
 AddLabel(showContextLabels and exitWindow, "GAMMA HOUR", Color.RED);
 AddLabel(showContextLabels and lunch, "LUNCH", Color.DARK_ORANGE);
 AddLabel(showLabels,
-    "V13.26 · " +
+    "V13.25 · " +
     (if lockoutCondition then "LOCKED OUT"
      else if TradeCall then "TRADE CALL · " + callScore[1]
      else if TradePut then "TRADE PUT · " + putScore[1]
