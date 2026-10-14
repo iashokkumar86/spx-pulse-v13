@@ -748,7 +748,8 @@ AddLabel(showContextLabels,
      else if regime == 3 then "RANGE"
      else "UNDECIDED") +
     " · gap " + Round(gapPct, 2) + "%" +
-    (if gapLarge then " go" else if gapFadeAlive then " fade" else "") +
+    (if gapAndGoUp or gapAndGoDown then " go" else if gapFadeAlive then " fade"
+     else if gapLarge then " go-dead" else "") +
     " · EM " + Round(100 * emUsed, 0) + "%",
     if regime == 1 then Color.GREEN
     else if regime == 2 then Color.RED
