@@ -95,6 +95,12 @@ showLevels      = input.bool(true,  "Plot OR / PDH / PDL / PDC", group = grpBT)
 
 inWindow = testWindow == "All" ? true : testWindow == "In-sample" ? time < splitDate : time >= splitDate
 
+// Guardrail: the tolerance floor, EM math and level logic are SPX-scale.
+// Running on another symbol produces garbage geometry, so refuse loudly.
+if barstate.islast and not str.contains(syminfo.ticker, "SPX")
+    var table warn = table.new(position.middle_center, 1, 1)
+    table.cell(warn, 0, 0, "WRONG SYMBOL: " + syminfo.tickerid + "\nThis strategy is SPX-only — results here are invalid.", bgcolor = color.new(color.red, 10), text_color = color.white, text_size = size.large)
+
 // ---------------- Session clock (bar OPEN time, like SecondsFromTime) -----
 tzNY = "America/New_York"
 minsNY     = hour(time, tzNY) * 60 + minute(time, tzNY)
